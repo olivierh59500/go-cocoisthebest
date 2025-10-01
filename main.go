@@ -25,6 +25,7 @@ const (
 
 	// Constants for effects
 	nbCubes      = 12
+	nbDMALogos   = 16
 	scrollSpeed  = 4.0
 	fontHeight   = 36
 	scrollFontCharSize = 32
@@ -38,7 +39,7 @@ const (
 
 // Embedded assets
 //
-//go:embed assets/title.png
+//go:embed assets/dma-70.png
 var titleImgData []byte
 
 //go:embed assets/bars.png
@@ -259,14 +260,14 @@ func (c *Cube3D) Draw(screen *ebiten.Image, centerX, centerY float64) {
 		{1, 2, 6, 5}, // Right
 	}
 
-	// Define face colors (pink/magenta tones)
+	// Define face colors (orange tones)
 	faceColors := []color.Color{
-		color.RGBA{255, 80, 160, 255},  // Hot pink
-		color.RGBA{255, 120, 200, 255}, // Light pink
-		color.RGBA{200, 60, 140, 255},  // Dark pink
-		color.RGBA{255, 100, 180, 255}, // Medium pink
-		color.RGBA{220, 80, 160, 255},  // Rose
-		color.RGBA{255, 140, 200, 255}, // Pale pink
+		color.RGBA{255, 140, 0, 255},   // Dark orange
+		color.RGBA{255, 165, 50, 255},  // Orange
+		color.RGBA{255, 180, 80, 255},  // Light orange
+		color.RGBA{255, 120, 0, 255},   // Deep orange
+		color.RGBA{255, 150, 30, 255},  // Medium orange
+		color.RGBA{255, 200, 100, 255}, // Pale orange
 	}
 
 	// Rotate vertices
@@ -517,8 +518,8 @@ type Game struct {
 	cubes          []*Cube3D
 	spritePos      []float64
 
-	// DMA logo sprites (9 logos in 3x3 grid)
-	dmaSprites     [9]DMASprite
+	// DMA logo sprites (16 logos in 4x4 grid)
+	dmaSprites     [nbDMALogos]DMASprite
 	ctrSprite      float64
 
 	// Scrolling text (megatwist style)
@@ -993,18 +994,18 @@ func (g *Game) updateDemo() {
 	baseX := 100 * math.Sin(g.ctrSprite*1.35+1.25) + 100 * math.Sin(g.ctrSprite*1.86+0.54)
 	baseY := 60 * math.Cos(g.ctrSprite*1.72+0.23) + 60 * math.Cos(g.ctrSprite*1.63+0.98)
 
-	for i := 0; i < 9; i++ {
-		// 3x3 grid pattern
-		row := i / 3
-		col := i % 3
+	for i := 0; i < nbDMALogos; i++ {
+		// 4x4 grid pattern
+		row := i / 4
+		col := i % 4
 
 		// Base position centered on screen, avoiding top banner (72px height)
 		centerX := float64(screenWidth) / 2
 		centerY := 72 + float64(screenHeight-72)/2 // Below banner, centered in remaining space
 
-		// Grid offsets - spread to occupy the screen (3x3 grid)
-		offsetX := (float64(col) - 1) * 250 // Spread horizontally (increased from 220)
-		offsetY := (float64(row) - 1) * 180 // Spread vertically (increased from 160)
+		// Grid offsets - spread to occupy the screen (4x4 grid)
+		offsetX := (float64(col) - 1.5) * 200 // Centered with 4 columns
+		offsetY := (float64(row) - 1.5) * 140 // Centered with 4 rows
 
 		// Apply synchronized movement
 		g.dmaSprites[i].x = centerX + offsetX + baseX
@@ -1116,8 +1117,9 @@ func (g *Game) drawDMALogos(dst *ebiten.Image) {
 }
 
 func (g *Game) drawScrollText(dst *ebiten.Image) {
-	// Update wave position
-	g.frontWavePos = g.iteration * 10
+	// Update wave position with speed multiplier for amplitude
+//	g.frontWavePos = int(float64(g.iteration) * 10.0 * g.speedMultiplier)
+	g.frontWavePos = int(float64(g.iteration) * 10.0 * 1.5)
 
 	// Calculate horizontal offset
 	decalX := 999999999
