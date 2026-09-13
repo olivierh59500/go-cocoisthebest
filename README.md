@@ -86,6 +86,7 @@ Authentic **Atari ST YM music** plays throughout the demo! The YM format was the
 
 - **↑/↓** - Adjust music volume (because sometimes you want it LOUDER)
 - **+/-** - Speed multiplier (0.5× to 2.0×) - Make the demo dance faster or go full slow-mo
+- **Android** - Use the `V+`/`V-` and `S+`/`S-` buttons in the side areas; multitouch is supported
 - **Just watch** - Sometimes the best interaction is appreciation
 
 ## 🏗️ Technical Details

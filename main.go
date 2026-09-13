@@ -4,20 +4,14 @@ package coco
 import (
 	"bytes"
 	_ "embed"
-	"fmt"
 	"image"
 	"image/color"
 	_ "image/png"
-	"io"
 	"log"
 	"math"
-	"sync"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/audio"
-	"github.com/hajimehoshi/ebiten/v2/inpututil"
-	"github.com/hajimehoshi/ebiten/v2/vector"
-	"github.com/olivierh59500/ym-player/pkg/stsound"
 )
 
 const (
@@ -25,18 +19,23 @@ const (
 	screenHeight = 600
 
 	// Constants for effects
-	nbCubes            = 12
-	nbDMALogos         = 16
-	scrollSpeed        = 4.0
-	fontHeight         = 36
-	scrollFontCharSize = 32
+	nbCubes    = 12
+	nbDMALogos = 16
+	fontHeight = 36
 
 	// The rotozoom quad is deliberately larger than the scene so rotations and
 	// oscillations never reveal its edges. Its texture is repeated by the GPU.
 	rotoWidth  = screenWidth * 4
 	rotoHeight = screenHeight * 4
 
-	sampleRate = 44100
+	sampleRate      = 44100
+	scrollPadding   = "     "
+	introScrollText = scrollPadding + scrollPadding +
+		"IF YOU THINK THIS IS ALL, YOU'RE SO WRONG..." + scrollPadding
+	demoScrollText = scrollPadding + scrollPadding +
+		"WELCOME TO THE COCO IS THE BEST DEMO! " + scrollPadding +
+		"THIS DEMO COMBINES THE BEST EFFECTS FROM VARIOUS ATARI ST DEMOS. " + scrollPadding +
+		"GREETINGS TO ALL DEMOSCENE LOVERS! " + scrollPadding + scrollPadding
 
 	// LogicalScreenWidth and LogicalScreenHeight are the dimensions of the
 	// original 4:3 scene. Wider displays add centered side areas instead of
@@ -77,154 +76,11 @@ const (
 	cdSplitted
 )
 
-// YMPlayer wraps the YM player for Ebiten audio
-type YMPlayer struct {
-	player     *stsound.StSound
-	sampleRate int
-	buffer     []int16
-	mutex      sync.Mutex
-	position   int64 // byte offset in the stereo 16-bit PCM stream
-	totalBytes int64
-	loop       bool
-	volume     float64
-}
-
-// NewYMPlayer creates a new YM player instance
-func NewYMPlayer(data []byte, sampleRate int, loop bool) (*YMPlayer, error) {
-	player := stsound.CreateWithRate(sampleRate)
-
-	if err := player.LoadMemory(data); err != nil {
-		player.Destroy()
-		return nil, fmt.Errorf("failed to load YM data: %w", err)
-	}
-
-	player.SetLoopMode(loop)
-
-	info := player.GetInfo()
-	totalSamples := int64(info.MusicTimeInMs) * int64(sampleRate) / 1000
-
-	return &YMPlayer{
-		player:     player,
-		sampleRate: sampleRate,
-		buffer:     make([]int16, 4096),
-		totalBytes: totalSamples * 4,
-		loop:       loop,
-		volume:     0.7,
-	}, nil
-}
-
-func (y *YMPlayer) Read(p []byte) (n int, err error) {
-	y.mutex.Lock()
-	defer y.mutex.Unlock()
-
-	if y.player == nil {
-		return 0, io.ErrClosedPipe
-	}
-
-	samplesNeeded := len(p) / 4
-	processed := 0
-	for processed < samplesNeeded {
-		chunkSize := samplesNeeded - processed
-		if chunkSize > len(y.buffer) {
-			chunkSize = len(y.buffer)
-		}
-
-		if !y.player.Compute(y.buffer[:chunkSize], chunkSize) {
-			if !y.loop {
-				clear(p[processed*4 : samplesNeeded*4])
-				return samplesNeeded * 4, io.EOF
-			}
-		}
-
-		for i := 0; i < chunkSize; i++ {
-			sample := int16(float64(y.buffer[i]) * y.volume)
-			offset := (processed + i) * 4
-			p[offset] = byte(sample)
-			p[offset+1] = byte(sample >> 8)
-			p[offset+2] = byte(sample)
-			p[offset+3] = byte(sample >> 8)
-		}
-
-		processed += chunkSize
-		y.position += int64(chunkSize * 4)
-	}
-
-	return samplesNeeded * 4, nil
-}
-
-func (y *YMPlayer) Seek(offset int64, whence int) (int64, error) {
-	y.mutex.Lock()
-	defer y.mutex.Unlock()
-
-	var newPos int64
-	switch whence {
-	case io.SeekStart:
-		newPos = offset
-	case io.SeekCurrent:
-		newPos = y.position + offset
-	case io.SeekEnd:
-		newPos = y.totalBytes + offset
-	default:
-		return 0, fmt.Errorf("invalid whence: %d", whence)
-	}
-
-	if newPos < 0 {
-		newPos = 0
-	}
-	if newPos > y.totalBytes {
-		newPos = y.totalBytes
-	}
-	newPos = newPos / 4 * 4
-
-	if y.player == nil {
-		return 0, io.ErrClosedPipe
-	}
-	if !y.player.IsSeekable() {
-		if newPos != 0 {
-			return y.position, fmt.Errorf("YM stream is not seekable")
-		}
-		y.player.Restart()
-	} else {
-		timeInMs := (newPos / 4) * 1000 / int64(y.sampleRate)
-		y.player.Seek(uint32(timeInMs))
-	}
-
-	y.position = newPos
-	return newPos, nil
-}
-
-func (y *YMPlayer) Close() error {
-	y.mutex.Lock()
-	defer y.mutex.Unlock()
-
-	if y.player != nil {
-		y.player.Destroy()
-		y.player = nil
-	}
-	return nil
-}
-
-func (y *YMPlayer) GetVolume() float64 {
-	y.mutex.Lock()
-	defer y.mutex.Unlock()
-	return y.volume
-}
-
-func (y *YMPlayer) SetVolume(vol float64) {
-	y.mutex.Lock()
-	defer y.mutex.Unlock()
-	if vol < 0 {
-		vol = 0
-	} else if vol > 1 {
-		vol = 1
-	}
-	y.volume = vol
-}
-
 // Letter for font rendering
 type Letter struct {
 	x, y  int
 	width int
+	glyph *ebiten.Image
 }
 
 // Cube3D represents a 3D cube
@@ -233,7 +89,56 @@ type Cube3D struct {
 	angleY float64
 	angleZ float64
 	size   float64
+
+	rotated      [8][3]float64
+	projected    [8][2]float64
+	depths       [6]faceDepth
+	faceVertices [4]ebiten.Vertex
+	edgeVertices [4]ebiten.Vertex
+	visibleFaces int
 }
+
+type faceDepth struct {
+	index int
+	depth float64
+}
+
+type gameState uint8
+
+const (
+	gameStateIntro gameState = iota
+	gameStateDemo
+)
+
+var (
+	cubeVertices = [8][3]float64{
+		{-1, -1, -1},
+		{1, -1, -1},
+		{1, 1, -1},
+		{-1, 1, -1},
+		{-1, -1, 1},
+		{1, -1, 1},
+		{1, 1, 1},
+		{-1, 1, 1},
+	}
+	cubeFaces = [6][4]int{
+		{0, 3, 2, 1},
+		{4, 5, 6, 7},
+		{0, 1, 5, 4},
+		{2, 3, 7, 6},
+		{0, 4, 7, 3},
+		{1, 2, 6, 5},
+	}
+	cubeFaceColors = [6]color.RGBA{
+		{R: 255, G: 140, A: 255},
+		{R: 255, G: 165, B: 50, A: 255},
+		{R: 255, G: 180, B: 80, A: 255},
+		{R: 255, G: 120, A: 255},
+		{R: 255, G: 150, B: 30, A: 255},
+		{R: 255, G: 200, B: 100, A: 255},
+	}
+	cubeFaceIndices = [6]uint16{0, 1, 2, 0, 2, 3}
+)
 
 func NewCube3D(size float64) *Cube3D {
 	return &Cube3D{
@@ -249,196 +154,132 @@ func (c *Cube3D) Rotate(dx, dy, dz float64) {
 
 // project3D projects 3D coordinates to 2D
 func project3D(x, y, z float64) (float64, float64) {
-	perspective := 200.0
+	const perspective = 200.0
 	factor := perspective / (perspective + z)
 	return x * factor, y * factor
 }
 
-// Draw draws the 3D cube at the specified position
-func (c *Cube3D) Draw(screen *ebiten.Image, centerX, centerY float64) {
-	// Define cube vertices in 3D space
-	vertices := [][3]float64{
-		{-c.size / 2, -c.size / 2, -c.size / 2}, // 0
-		{c.size / 2, -c.size / 2, -c.size / 2},  // 1
-		{c.size / 2, c.size / 2, -c.size / 2},   // 2
-		{-c.size / 2, c.size / 2, -c.size / 2},  // 3
-		{-c.size / 2, -c.size / 2, c.size / 2},  // 4
-		{c.size / 2, -c.size / 2, c.size / 2},   // 5
-		{c.size / 2, c.size / 2, c.size / 2},    // 6
-		{-c.size / 2, c.size / 2, c.size / 2},   // 7
-	}
+func (c *Cube3D) updateGeometry(centerX, centerY float64) {
+	cosX, sinX := math.Cos(c.angleX), math.Sin(c.angleX)
+	cosY, sinY := math.Cos(c.angleY), math.Sin(c.angleY)
+	cosZ, sinZ := math.Cos(c.angleZ), math.Sin(c.angleZ)
+	halfSize := c.size / 2
 
-	// Define cube faces (indices into vertices array)
-	faces := [][4]int{
-		{0, 1, 2, 3}, // Back
-		{4, 5, 6, 7}, // Front
-		{0, 1, 5, 4}, // Bottom
-		{2, 3, 7, 6}, // Top
-		{0, 3, 7, 4}, // Left
-		{1, 2, 6, 5}, // Right
-	}
+	for i, vertex := range cubeVertices {
+		x := vertex[0] * halfSize
+		y := vertex[1] * halfSize
+		z := vertex[2] * halfSize
 
-	// Define face colors (orange tones)
-	faceColors := []color.Color{
-		color.RGBA{255, 140, 0, 255},   // Dark orange
-		color.RGBA{255, 165, 50, 255},  // Orange
-		color.RGBA{255, 180, 80, 255},  // Light orange
-		color.RGBA{255, 120, 0, 255},   // Deep orange
-		color.RGBA{255, 150, 30, 255},  // Medium orange
-		color.RGBA{255, 200, 100, 255}, // Pale orange
-	}
-
-	// Rotate vertices
-	rotated := make([][3]float64, len(vertices))
-	for i, v := range vertices {
-		x, y, z := v[0], v[1], v[2]
-
-		// Rotate around X axis
-		cosX, sinX := math.Cos(c.angleX), math.Sin(c.angleX)
 		y1 := y*cosX - z*sinX
 		z1 := y*sinX + z*cosX
 		y, z = y1, z1
 
-		// Rotate around Y axis
-		cosY, sinY := math.Cos(c.angleY), math.Sin(c.angleY)
 		x1 := x*cosY + z*sinY
 		z2 := -x*sinY + z*cosY
 		x, z = x1, z2
 
-		// Rotate around Z axis
-		cosZ, sinZ := math.Cos(c.angleZ), math.Sin(c.angleZ)
 		x2 := x*cosZ - y*sinZ
 		y2 := x*sinZ + y*cosZ
 		x, y = x2, y2
 
-		rotated[i] = [3]float64{x, y, z}
+		c.rotated[i] = [3]float64{x, y, z}
+		x2D, y2D := project3D(x, y, z)
+		c.projected[i] = [2]float64{centerX + x2D, centerY + y2D}
 	}
 
-	// Calculate face depths for sorting
-	type faceDepth struct {
-		index int
-		depth float64
-	}
-	depths := make([]faceDepth, len(faces))
+	c.visibleFaces = 0
+	for i, face := range cubeFaces {
+		a := c.rotated[face[0]]
+		b := c.rotated[face[1]]
+		d := c.rotated[face[2]]
+		abX, abY, abZ := b[0]-a[0], b[1]-a[1], b[2]-a[2]
+		adX, adY, adZ := d[0]-a[0], d[1]-a[1], d[2]-a[2]
+		normalX := abY*adZ - abZ*adY
+		normalY := abZ*adX - abX*adZ
+		normalZ := abX*adY - abY*adX
 
-	for i, face := range faces {
-		// Calculate center of face
+		centerX, centerY := 0.0, 0.0
 		centerZ := 0.0
 		for _, vi := range face {
-			centerZ += rotated[vi][2]
+			centerX += c.rotated[vi][0]
+			centerY += c.rotated[vi][1]
+			centerZ += c.rotated[vi][2]
 		}
-		depths[i] = faceDepth{i, centerZ / 4}
+		centerX /= 4
+		centerY /= 4
+		centerZ /= 4
+
+		// The camera is at (0, 0, -200). Discard faces whose outward
+		// normal points away from it.
+		facing := normalX*-centerX + normalY*-centerY + normalZ*(-200-centerZ)
+		if facing <= 0 {
+			continue
+		}
+		c.depths[c.visibleFaces] = faceDepth{index: i, depth: centerZ}
+		c.visibleFaces++
 	}
 
-	// Sort faces by depth (back to front)
-	for i := 0; i < len(depths)-1; i++ {
-		for j := i + 1; j < len(depths); j++ {
-			if depths[i].depth > depths[j].depth {
-				depths[i], depths[j] = depths[j], depths[i]
-			}
+	// Larger Z is farther from the camera and must be painted first.
+	for i := 1; i < c.visibleFaces; i++ {
+		for j := i; j > 0 && c.depths[j-1].depth < c.depths[j].depth; j-- {
+			c.depths[j-1], c.depths[j] = c.depths[j], c.depths[j-1]
 		}
 	}
+}
 
-	// Draw faces
-	for _, fd := range depths {
-		face := faces[fd.index]
-		faceColor := faceColors[fd.index]
+func setColoredVertex(vertex *ebiten.Vertex, x, y float64, clr color.RGBA) {
+	vertex.DstX = float32(x)
+	vertex.DstY = float32(y)
+	vertex.SrcX = 1
+	vertex.SrcY = 1
+	vertex.ColorR = float32(clr.R) / 0xff
+	vertex.ColorG = float32(clr.G) / 0xff
+	vertex.ColorB = float32(clr.B) / 0xff
+	vertex.ColorA = float32(clr.A) / 0xff
+}
 
-		// Project vertices to 2D
-		points := make([]float64, 0, 8)
-		for _, vi := range face {
-			v := rotated[vi]
-			x2d, y2d := project3D(v[0], v[1], v[2])
-			points = append(points, centerX+x2d, centerY+y2d)
+func (c *Cube3D) drawEdge(screen, fillImage *ebiten.Image, from, to [2]float64, clr color.RGBA) {
+	dx, dy := to[0]-from[0], to[1]-from[1]
+	length := math.Hypot(dx, dy)
+	if length == 0 {
+		return
+	}
+	offsetX := -dy / length / 2
+	offsetY := dx / length / 2
+	setColoredVertex(&c.edgeVertices[0], from[0]+offsetX, from[1]+offsetY, clr)
+	setColoredVertex(&c.edgeVertices[1], to[0]+offsetX, to[1]+offsetY, clr)
+	setColoredVertex(&c.edgeVertices[2], from[0]-offsetX, from[1]-offsetY, clr)
+	setColoredVertex(&c.edgeVertices[3], to[0]-offsetX, to[1]-offsetY, clr)
+	screen.DrawTriangles(c.edgeVertices[:], cubeFaceIndices[:], fillImage, nil)
+}
+
+// Draw draws the 3D cube at the specified position.
+func (c *Cube3D) Draw(screen, fillImage *ebiten.Image, centerX, centerY float64) {
+	c.updateGeometry(centerX, centerY)
+
+	for _, faceDepth := range c.depths[:c.visibleFaces] {
+		face := cubeFaces[faceDepth.index]
+		faceColor := cubeFaceColors[faceDepth.index]
+
+		for i, vertexIndex := range face {
+			point := c.projected[vertexIndex]
+			setColoredVertex(&c.faceVertices[i], point[0], point[1], faceColor)
 		}
-
-		// Draw filled polygon
-		drawPolygon(screen, points, faceColor)
+		screen.DrawTriangles(c.faceVertices[:], cubeFaceIndices[:], fillImage, nil)
 
 		// Draw edges with darker color for better visibility
 		edgeColor := color.RGBA{
-			uint8(faceColor.(color.RGBA).R * 3 / 4),
-			uint8(faceColor.(color.RGBA).G * 3 / 4),
-			uint8(faceColor.(color.RGBA).B * 3 / 4),
-			255,
+			R: faceColor.R * 3 / 4,
+			G: faceColor.G * 3 / 4,
+			B: faceColor.B * 3 / 4,
+			A: 255,
 		}
 		for i := 0; i < 4; i++ {
 			j := (i + 1) % 4
-			vector.StrokeLine(screen,
-				float32(points[i*2]), float32(points[i*2+1]),
-				float32(points[j*2]), float32(points[j*2+1]),
-				1, edgeColor, false)
+			from := c.projected[face[i]]
+			to := c.projected[face[j]]
+			c.drawEdge(screen, fillImage, from, to, edgeColor)
 		}
-	}
-}
-
-// drawPolygon draws a filled polygon
-func drawPolygon(screen *ebiten.Image, points []float64, fillColor color.Color) {
-	if len(points) < 6 {
-		return
-	}
-
-	// Draw as a filled rectangle using vector
-	if len(points) >= 8 {
-		// Draw filled quadrilateral as two triangles
-		// Triangle 1: points 0, 1, 2
-		drawTriangle(screen,
-			float32(points[0]), float32(points[1]),
-			float32(points[2]), float32(points[3]),
-			float32(points[4]), float32(points[5]),
-			fillColor)
-
-		// Triangle 2: points 0, 2, 3
-		drawTriangle(screen,
-			float32(points[0]), float32(points[1]),
-			float32(points[4]), float32(points[5]),
-			float32(points[6]), float32(points[7]),
-			fillColor)
-	}
-}
-
-// drawTriangle draws a filled triangle
-func drawTriangle(screen *ebiten.Image, x1, y1, x2, y2, x3, y3 float32, clr color.Color) {
-	// Sort vertices by Y coordinate
-	if y1 > y2 {
-		x1, y1, x2, y2 = x2, y2, x1, y1
-	}
-	if y1 > y3 {
-		x1, y1, x3, y3 = x3, y3, x1, y1
-	}
-	if y2 > y3 {
-		x2, y2, x3, y3 = x3, y3, x2, y2
-	}
-
-	// Draw horizontal lines to fill the triangle
-	for y := y1; y <= y3; y++ {
-		var xStart, xEnd float32
-
-		if y < y2 {
-			// Upper part of triangle
-			if y2-y1 > 0 {
-				t := (y - y1) / (y2 - y1)
-				x12 := x1 + (x2-x1)*t
-				t13 := (y - y1) / (y3 - y1)
-				x13 := x1 + (x3-x1)*t13
-				xStart, xEnd = x12, x13
-			}
-		} else {
-			// Lower part of triangle
-			if y3-y2 > 0 && y3-y1 > 0 {
-				t := (y - y2) / (y3 - y2)
-				x23 := x2 + (x3-x2)*t
-				t13 := (y - y1) / (y3 - y1)
-				x13 := x1 + (x3-x1)*t13
-				xStart, xEnd = x23, x13
-			}
-		}
-
-		if xStart > xEnd {
-			xStart, xEnd = xEnd, xStart
-		}
-
-		vector.StrokeLine(screen, xStart, y, xEnd, y, 1, clr, false)
 	}
 }
 
@@ -490,12 +331,12 @@ type Game struct {
 	// Images
 	titleImg   *ebiten.Image
 	barsImg    *ebiten.Image
+	barStrips  [10]*ebiten.Image
 	cocoImg    *ebiten.Image
 	dmaLogoImg *ebiten.Image
 	fontImg    *ebiten.Image
 
 	// Canvases
-	introCanvas *ebiten.Image
 	introStrip  *ebiten.Image
 	mainCanvas  *ebiten.Image
 	scrollSurf  *ebiten.Image
@@ -508,34 +349,35 @@ type Game struct {
 	audioReady   bool
 
 	// State
-	state         string // "intro" or "demo"
-	introComplete bool
-	iteration     int
+	state    gameState
+	demoTime float64
 
 	// Intro scrolling
-	introX      int
-	introLetter int
-	introTile   int
-	introSpeed  int
-	introText   string
-	surfScroll1 *ebiten.Image
-	surfScroll2 *ebiten.Image
+	introX            int
+	introLetter       int
+	introTile         int
+	introSpeed        int
+	introTextRunes    []rune
+	surfScroll1       *ebiten.Image
+	surfScroll2       *ebiten.Image
+	introScrollSource *ebiten.Image
 
 	// Font data
-	letterData map[rune]*Letter
+	letterData map[rune]Letter
 
 	// CRT Shader
 	crtShader *ebiten.Shader
 
 	// Demo effects
 	// Copper bars
-	cnt       int
-	cnt2      int
+	cnt       float64
+	cnt2      float64
 	copperSin []int
 
 	// 3D Cubes
-	cubes     []*Cube3D
-	spritePos []float64
+	cubes         [nbCubes]Cube3D
+	spritePos     [nbCubes]float64
+	cubeFillImage *ebiten.Image
 
 	// DMA logo sprites (16 logos in 4x4 grid)
 	dmaSprites [nbDMALogos]DMASprite
@@ -545,11 +387,13 @@ type Game struct {
 	frontWavePos    int
 	letterNum       int
 	letterDecal     int
-	curves          [][]int
+	curves          [8][]int
 	frontMainWave   []int
 	position        []int
-	scrollText      string
 	scrollTextRunes []rune
+	displayedLetter int
+	scrollVertices  []ebiten.Vertex
+	scrollIndices   []uint16
 
 	// Rotozoom
 	posXi        float64
@@ -558,16 +402,15 @@ type Game struct {
 	rotoVertices [4]ebiten.Vertex
 
 	// Title logo animation
-	logoX    float64
-	hold     int
-	rasterY1 float64
-	rasterY2 float64
-
+	logoX float64
+	hold  int
 	// Speed control
 	speedMultiplier float64
 
-	// VBL counter
-	vbl int
+	// Responsive layout and input state
+	logicalWidth   int
+	touchIDs       [8]ebiten.TouchID
+	controlPressed [controlCount]bool
 }
 
 type DMASprite struct {
@@ -576,39 +419,44 @@ type DMASprite struct {
 
 func NewGame() *Game {
 	g := &Game{
-		state:           "intro",
+		state:           gameStateIntro,
 		introX:          -1,
 		introLetter:     -1,
 		introTile:       -1,
 		introSpeed:      8,
-		letterData:      make(map[rune]*Letter),
-		spritePos:       make([]float64, nbCubes),
+		letterData:      make(map[rune]Letter),
 		speedMultiplier: 1.0,
+		displayedLetter: -1,
+		logicalWidth:    screenWidth,
 		logoX:           0.5, // Center the logo (0.5 = centered)
 		hold:            0,   // Start immediately
 	}
 
-	// Init intro text
-	spc := "     "
-	g.introText = spc + spc + "IF YOU THINK THIS IS ALL, YOU'RE SO WRONG..." + spc
-
-	// Init demo scroll text
-	g.scrollText = spc + spc + "WELCOME TO THE COCO IS THE BEST DEMO! " + spc +
-		"THIS DEMO COMBINES THE BEST EFFECTS FROM VARIOUS ATARI ST DEMOS. " + spc +
-		"GREETINGS TO ALL DEMOSCENE LOVERS! " + spc + spc
-	g.scrollTextRunes = []rune(g.scrollText)
+	g.introTextRunes = []rune(introScrollText)
+	g.scrollTextRunes = []rune(demoScrollText)
 
 	// Load images
 	g.loadImages()
 
 	// Create canvases
-	g.introCanvas = ebiten.NewImage(screenWidth, screenHeight)
 	g.introStrip = ebiten.NewImage(screenWidth, int(fontHeight*2))
-	g.mainCanvas = ebiten.NewImage(screenWidth, screenHeight)
+	g.mainCanvas = ebiten.NewImageWithOptions(
+		image.Rect(0, 0, screenWidth, screenHeight),
+		&ebiten.NewImageOptions{Unmanaged: true},
+	)
 	g.surfScroll1 = ebiten.NewImage(screenWidth+96, int(fontHeight*2))
 	g.surfScroll2 = ebiten.NewImage(screenWidth+96, int(fontHeight*2))
-	g.scrollSurf = ebiten.NewImage(int(float64(screenWidth)*2.0), int(fontHeight*3))
+	g.introScrollSource = g.surfScroll1.SubImage(
+		image.Rect(g.introSpeed, 0, g.surfScroll1.Bounds().Dx(), int(fontHeight*2)),
+	).(*ebiten.Image)
+	g.scrollSurf = ebiten.NewImageWithOptions(
+		image.Rect(0, 0, screenWidth*2, fontHeight*3),
+		&ebiten.NewImageOptions{Unmanaged: true},
+	)
 	g.titleCanvas = ebiten.NewImage(screenWidth, 72)
+	g.cubeFillImage = ebiten.NewImage(3, 3)
+	g.cubeFillImage.Fill(color.White)
+	g.initScrollMesh()
 
 	for i := range g.rotoVertices {
 		g.rotoVertices[i].ColorR = 0.5
@@ -623,11 +471,11 @@ func NewGame() *Game {
 
 	// Init font
 	g.initFontData()
+	g.initBarStrips()
 
 	// Init 3D cubes
-	g.cubes = make([]*Cube3D, nbCubes)
 	for i := 0; i < nbCubes; i++ {
-		g.cubes[i] = NewCube3D(40.0) // Size of cube
+		g.cubes[i].size = 40
 		// Set initial position offset for each cube
 		g.spritePos[i] = float64(0.15) * float64(i+1)
 		// Set different initial rotations
@@ -637,7 +485,6 @@ func NewGame() *Game {
 	}
 
 	// Init wave curves for scrolling
-	g.curves = make([][]int, 8)
 	g.createCurves()
 	g.precalcPosition()
 	g.precalcMainWave()
@@ -749,7 +596,24 @@ func (g *Game) initFontData() {
 	}
 
 	for _, d := range data {
-		g.letterData[d.char] = &Letter{x: d.x, y: d.y, width: d.width}
+		letter := Letter{x: d.x, y: d.y, width: d.width}
+		if g.fontImg != nil {
+			letter.glyph = g.fontImg.SubImage(
+				image.Rect(d.x, d.y, d.x+d.width, d.y+fontHeight),
+			).(*ebiten.Image)
+		}
+		g.letterData[d.char] = letter
+	}
+}
+
+func (g *Game) initBarStrips() {
+	if g.barsImg == nil || g.barsImg.Bounds().Dy() < len(g.barStrips)*2 {
+		return
+	}
+	width := g.barsImg.Bounds().Dx()
+	for i := range g.barStrips {
+		y := i * 2
+		g.barStrips[i] = g.barsImg.SubImage(image.Rect(0, y, width, y+2)).(*ebiten.Image)
 	}
 }
 
@@ -861,6 +725,32 @@ func (g *Game) precalcMainWave() {
 	}
 }
 
+func (g *Game) initScrollMesh() {
+	const lineCount = screenHeight - 72
+	g.scrollVertices = make([]ebiten.Vertex, lineCount*4)
+	g.scrollIndices = make([]uint16, lineCount*6)
+
+	for line := 0; line < lineCount; line++ {
+		vertexBase := line * 4
+		for i := 0; i < 4; i++ {
+			vertex := &g.scrollVertices[vertexBase+i]
+			vertex.ColorR = 1
+			vertex.ColorG = 1
+			vertex.ColorB = 1
+			vertex.ColorA = 1
+		}
+
+		indexBase := line * 6
+		base := uint16(vertexBase)
+		g.scrollIndices[indexBase] = base
+		g.scrollIndices[indexBase+1] = base + 1
+		g.scrollIndices[indexBase+2] = base + 2
+		g.scrollIndices[indexBase+3] = base + 1
+		g.scrollIndices[indexBase+4] = base + 2
+		g.scrollIndices[indexBase+5] = base + 3
+	}
+}
+
 func (g *Game) getSum(arr []int, index, decal int) int {
 	n := len(arr)
 	if n == 0 {
@@ -878,10 +768,33 @@ func (g *Game) getWave(i int) int {
 }
 
 func (g *Game) getPosition(i int) int {
-	if i > 0 && i <= len(g.position) {
+	if i > 0 {
 		return g.getSum(g.position, i-1, 0)
 	}
 	return 0
+}
+
+func (g *Game) advanceScrollLetter(decalX int) {
+	if len(g.position) == 0 {
+		g.letterNum = 0
+		g.letterDecal = 0
+		return
+	}
+	for g.letterNum > 0 && decalX < g.getPosition(g.letterNum) {
+		g.letterNum--
+	}
+	for g.getPosition(g.letterNum+1) <= decalX {
+		g.letterNum++
+	}
+	g.letterDecal = g.getPosition(g.letterNum)
+}
+
+func (g *Game) scrollOffset(frontWavePos int) int {
+	decalX := g.getWave(frontWavePos)
+	for line := 1; line < fontHeight; line++ {
+		decalX = min(decalX, g.getWave(frontWavePos+line))
+	}
+	return max(decalX, 0)
 }
 
 func (g *Game) getLetter(pos int) rune {
@@ -892,11 +805,10 @@ func (g *Game) getLetter(pos int) rune {
 }
 
 func (g *Game) getIntroLetter(pos int) rune {
-	runes := []rune(g.introText)
-	if len(runes) == 0 {
+	if len(g.introTextRunes) == 0 {
 		return ' '
 	}
-	return runes[pos%len(runes)]
+	return g.introTextRunes[pos%len(g.introTextRunes)]
 }
 
 func (g *Game) Update() error {
@@ -907,45 +819,14 @@ func (g *Game) Update() error {
 		g.initAudio()
 	}
 
-	// Volume control
-	if g.ymPlayer != nil {
-		if ebiten.IsKeyPressed(ebiten.KeyUp) {
-			vol := g.ymPlayer.GetVolume() + 0.01
-			if vol > 1.0 {
-				vol = 1.0
-			}
-			g.ymPlayer.SetVolume(vol)
-		}
-		if ebiten.IsKeyPressed(ebiten.KeyDown) {
-			vol := g.ymPlayer.GetVolume() - 0.01
-			if vol < 0 {
-				vol = 0
-			}
-			g.ymPlayer.SetVolume(vol)
-		}
-	}
+	g.updateControls()
 
-	// Speed control
-	if inpututil.IsKeyJustPressed(ebiten.KeyEqual) {
-		g.speedMultiplier += 0.1
-		if g.speedMultiplier > 2.0 {
-			g.speedMultiplier = 2.0
-		}
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyMinus) {
-		g.speedMultiplier -= 0.1
-		if g.speedMultiplier < 0.5 {
-			g.speedMultiplier = 0.5
-		}
-	}
-
-	if g.state == "intro" {
+	if g.state == gameStateIntro {
 		g.updateIntro()
 	} else {
 		g.updateDemo()
 	}
 
-	g.vbl++
 	return nil
 }
 
@@ -958,11 +839,9 @@ func (g *Game) updateIntro() {
 			}
 		}
 		g.introLetter++
-		runes := []rune(g.introText)
-		if g.introLetter >= len(runes) {
-			g.introComplete = true
-			g.state = "demo"
-			g.iteration = 0
+		if g.introLetter >= len(g.introTextRunes) {
+			g.state = gameStateDemo
+			g.demoTime = 0
 			// Start music
 			if g.audioPlayer != nil && !g.audioPlayer.IsPlaying() {
 				g.audioPlayer.Play()
@@ -975,8 +854,7 @@ func (g *Game) updateIntro() {
 
 	// Scroll
 	g.surfScroll2.Clear()
-	srcRect := image.Rect(g.introSpeed, 0, g.surfScroll1.Bounds().Dx(), int(fontHeight*2))
-	g.surfScroll2.DrawImage(g.surfScroll1.SubImage(srcRect).(*ebiten.Image), nil)
+	g.surfScroll2.DrawImage(g.introScrollSource, nil)
 
 	g.surfScroll1.Clear()
 	g.surfScroll1.DrawImage(g.surfScroll2, nil)
@@ -984,33 +862,39 @@ func (g *Game) updateIntro() {
 	// Draw new letter
 	char := g.getIntroLetter(g.introTile)
 	if letter, ok := g.letterData[char]; ok {
-		srcRect := image.Rect(letter.x, letter.y, letter.x+letter.width, letter.y+fontHeight)
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Scale(2.0, 2.0)
 		op.GeoM.Translate(float64(screenWidth+g.introX), 0)
-		g.surfScroll1.DrawImage(g.fontImg.SubImage(srcRect).(*ebiten.Image), op)
+		g.surfScroll1.DrawImage(letter.glyph, op)
 	}
 }
 
 func (g *Game) updateDemo() {
-	g.iteration++
+	speed := g.speedMultiplier
+	g.demoTime += speed
 
 	// Update copper bars
-	g.cnt = (g.cnt + 3) & 0x3ff
-	g.cnt2 = (g.cnt2 - 5) & 0x3ff
+	g.cnt += 3 * speed
+	if g.cnt >= 1024 {
+		g.cnt -= 1024
+	}
+	g.cnt2 -= 5 * speed
+	if g.cnt2 < 0 {
+		g.cnt2 += 1024
+	}
 
 	// Update 3D cubes
 	for i := 0; i < nbCubes; i++ {
-		g.spritePos[i] += 0.04 * g.speedMultiplier
+		g.spritePos[i] += 0.04 * speed
 		g.cubes[i].Rotate(
-			0.02*g.speedMultiplier*(1+float64(i)*0.1),
-			0.03*g.speedMultiplier*(1+float64(i)*0.15),
-			0.01*g.speedMultiplier*(1+float64(i)*0.05),
+			0.02*speed*(1+float64(i)*0.1),
+			0.03*speed*(1+float64(i)*0.15),
+			0.01*speed*(1+float64(i)*0.05),
 		)
 	}
 
 	// Update DMA logo sprites - synchronized movement (all move together)
-	g.ctrSprite += 0.02
+	g.ctrSprite += 0.02 * speed
 
 	// Base movement for all sprites (synchronized)
 	baseX := 100*math.Sin(g.ctrSprite*1.35+1.25) + 100*math.Sin(g.ctrSprite*1.86+0.54)
@@ -1035,34 +919,32 @@ func (g *Game) updateDemo() {
 	}
 
 	// Update rotozoom
-	g.posXi += 0.008
-	g.posZi += 0.003
-	g.posRi += 0.005
+	g.posXi += 0.008 * speed
+	g.posZi += 0.003 * speed
+	g.posRi += 0.005 * speed
 
 	// Update title logo (oscillating movement like viva_tcb)
 	if g.hold >= 1 {
 		g.hold--
 	}
 	if g.hold <= 0 {
-		g.logoX += 0.0125 // Moves from right to left and back
+		g.logoX += 0.0125 * speed // Moves from right to left and back
 	}
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
 
-	var scene *ebiten.Image
-	if g.state == "intro" {
-		g.drawIntro(g.introCanvas)
-		scene = g.introCanvas
+	if g.state == gameStateIntro {
+		g.drawIntro(g.mainCanvas)
 	} else {
 		g.drawDemo()
-		scene = g.mainCanvas
 	}
 
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Translate(float64((screen.Bounds().Dx()-screenWidth)/2), 0)
-	screen.DrawImage(scene, op)
+	screen.DrawImage(g.mainCanvas, op)
+	g.drawControls(screen)
 }
 
 func (g *Game) drawIntro(screen *ebiten.Image) {
@@ -1155,56 +1037,28 @@ func (g *Game) drawDMALogos(dst *ebiten.Image) {
 }
 
 func (g *Game) drawScrollText(dst *ebiten.Image) {
-	// Update wave position with speed multiplier for amplitude
-	//	g.frontWavePos = int(float64(g.iteration) * 10.0 * g.speedMultiplier)
-	g.frontWavePos = int(float64(g.iteration) * 10.0 * 1.5)
+	g.frontWavePos = int(g.demoTime * 15)
 
-	// Calculate horizontal offset
-	decalX := 999999999
-	for ligne := 0; ligne < fontHeight; ligne++ {
-		c := g.getWave(g.frontWavePos + ligne)
-		if c < decalX {
-			decalX = c
-		}
-	}
+	decalX := g.scrollOffset(g.frontWavePos)
 
-	if decalX < 0 {
-		decalX = 0
-	}
+	// Calculate the first visible letter. letterNum is deliberately unbounded:
+	// getPosition and getLetter repeat their source tables for seamless loops.
+	g.advanceScrollLetter(decalX)
 
-	// Calculate first visible letter
-	i := 0
-	dir := 0
-	if decalX > g.letterDecal {
-		dir = 1
-	} else if decalX < g.letterDecal {
-		dir = -1
+	// The surface content changes only when the first visible letter changes.
+	if g.displayedLetter != g.letterNum {
+		g.displayText(g.letterNum)
+		g.displayedLetter = g.letterNum
 	}
-
-	for decalX < g.getPosition(g.letterNum+i) || g.getPosition(g.letterNum+i+1) <= decalX {
-		i += dir
-		if g.letterNum+i < 0 || g.letterNum+i >= len(g.position) {
-			break
-		}
-	}
-	g.letterNum += i
-	if g.letterNum < 0 {
-		g.letterNum = 0
-	} else if g.letterNum >= len(g.position) {
-		g.letterNum = len(g.position) - 1
-	}
-	g.letterDecal = g.getPosition(g.letterNum)
-
-	// Render text to scroll surface
-	g.displayText(g.letterNum)
 
 	// Calculate bounce effect
-	bounce := int(math.Floor(18.0 * math.Abs(math.Sin(float64(g.iteration)*0.1))))
+	bounce := int(math.Floor(18.0 * math.Abs(math.Sin(g.demoTime*0.1))))
 
 	scrollWidth := g.scrollSurf.Bounds().Dx()
 	scaledFontHeight := int(fontHeight * 3.0)
 
-	// Render each line with distortion - cover full screen height (below banner)
+	// Build one mesh containing every distorted scanline. AddressRepeat replaces
+	// the previous split-rectangle wrapping and lets Ebitengine submit one draw.
 	baseY := 72                     // Start just below the banner
 	totalLines := screenHeight - 72 // Total lines from banner to bottom
 	for ligne := 0; ligne < totalLines; ligne++ {
@@ -1215,52 +1069,31 @@ func (g *Game) drawScrollText(dst *ebiten.Image) {
 
 		scaledLine := ((sourceFontLine+bounce)%fontHeight)*3 + (ligne % 3)
 
-		if scaledLine >= scaledFontHeight {
-			scaledLine = scaledLine % scaledFontHeight
-		}
+		scaledLine %= scaledFontHeight
 
+		dstX0 := 0
+		dstX1 := screenWidth
+		srcX0 := scrollXRaw % scrollWidth
 		if scrollXRaw < 0 {
-			visibleWidth := screenWidth + scrollXRaw
-			if visibleWidth > 0 {
-				srcRect := image.Rect(0, scaledLine, minInt(visibleWidth, scrollWidth), scaledLine+1)
-				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Translate(float64(-scrollXRaw), float64(baseY+ligne))
-				dst.DrawImage(g.scrollSurf.SubImage(srcRect).(*ebiten.Image), op)
-			}
-			continue
+			dstX0 = min(-scrollXRaw, screenWidth)
+			srcX0 = 0
 		}
+		srcX1 := srcX0 + dstX1 - dstX0
 
-		scrollX := scrollXRaw % scrollWidth
-		if scrollX >= scrollWidth-screenWidth {
-			width1 := scrollWidth - scrollX
-			if width1 > 0 && width1 <= screenWidth {
-				srcRect := image.Rect(scrollX, scaledLine, scrollWidth, scaledLine+1)
-				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Translate(0, float64(baseY+ligne))
-				dst.DrawImage(g.scrollSurf.SubImage(srcRect).(*ebiten.Image), op)
-			}
-
-			width2 := screenWidth - width1
-			if width2 > 0 && width2 <= screenWidth {
-				srcRect := image.Rect(0, scaledLine, width2, scaledLine+1)
-				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Translate(float64(width1), float64(baseY+ligne))
-				dst.DrawImage(g.scrollSurf.SubImage(srcRect).(*ebiten.Image), op)
-			}
-		} else if scrollX+screenWidth <= scrollWidth {
-			srcRect := image.Rect(scrollX, scaledLine, scrollX+screenWidth, scaledLine+1)
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(0, float64(baseY+ligne))
-			dst.DrawImage(g.scrollSurf.SubImage(srcRect).(*ebiten.Image), op)
-		}
+		vertexBase := ligne * 4
+		vertices := g.scrollVertices[vertexBase : vertexBase+4]
+		vertices[0].DstX, vertices[0].DstY = float32(dstX0), float32(baseY+ligne)
+		vertices[0].SrcX, vertices[0].SrcY = float32(srcX0), float32(scaledLine)
+		vertices[1].DstX, vertices[1].DstY = float32(dstX1), float32(baseY+ligne)
+		vertices[1].SrcX, vertices[1].SrcY = float32(srcX1), float32(scaledLine)
+		vertices[2].DstX, vertices[2].DstY = float32(dstX0), float32(baseY+ligne+1)
+		vertices[2].SrcX, vertices[2].SrcY = float32(srcX0), float32(scaledLine+1)
+		vertices[3].DstX, vertices[3].DstY = float32(dstX1), float32(baseY+ligne+1)
+		vertices[3].SrcX, vertices[3].SrcY = float32(srcX1), float32(scaledLine+1)
 	}
-}
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	op := &ebiten.DrawTrianglesOptions{Address: ebiten.AddressRepeat}
+	dst.DrawTriangles(g.scrollVertices, g.scrollIndices, g.scrollSurf, op)
 }
 
 func (g *Game) displayText(letterOffset int) {
@@ -1268,17 +1101,18 @@ func (g *Game) displayText(letterOffset int) {
 
 	xPos := 0
 	i := 0
-	maxWidth := g.scrollSurf.Bounds().Dx() + 200*3
+	maxWidth := g.scrollSurf.Bounds().Dx()
 
 	for xPos < maxWidth {
 		char := g.getLetter(i + letterOffset)
 		if letter, ok := g.letterData[char]; ok {
-			srcRect := image.Rect(letter.x, letter.y, letter.x+letter.width, letter.y+fontHeight)
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Scale(3.0, 3.0)
 			op.GeoM.Translate(float64(xPos), 0)
-			g.scrollSurf.DrawImage(g.fontImg.SubImage(srcRect).(*ebiten.Image), op)
+			g.scrollSurf.DrawImage(letter.glyph, op)
 			xPos += int(float64(letter.width) * 3.0)
+		} else {
+			xPos += 32 * 3
 		}
 		i++
 	}
@@ -1292,7 +1126,7 @@ func (g *Game) draw3DCubes(dst *ebiten.Image) {
 		yPos := float64(screenHeight)/2 + (84 * math.Cos(g.spritePos[i]*2.5)) // Centered vertically
 
 		// Draw the 3D cube
-		g.cubes[i].Draw(dst, xPos, yPos)
+		g.cubes[i].Draw(dst, g.cubeFillImage, xPos, yPos)
 	}
 }
 
@@ -1329,8 +1163,7 @@ func (g *Game) drawCopperBars(dst *ebiten.Image) {
 		return
 	}
 
-	barsWidth, barsHeight := g.barsImg.Size()
-	if barsHeight < 20 {
+	if g.barStrips[0] == nil {
 		return
 	}
 
@@ -1338,9 +1171,9 @@ func (g *Game) drawCopperBars(dst *ebiten.Image) {
 	cc := 0
 	for i := 0; i < 36; i++ { // 36 bars * 2 pixels = 72 pixels height
 		// Calculate sine positions for animation
-		val2 := (g.cnt + i*7) & 0x3ff
+		val2 := (int(g.cnt) + i*7) & 0x3ff
 		val := g.copperSin[val2]
-		val2 = (g.cnt2 + i*10) & 0x3ff
+		val2 = (int(g.cnt2) + i*10) & 0x3ff
 		val += g.copperSin[val2]
 		val += 60
 
@@ -1352,19 +1185,13 @@ func (g *Game) drawCopperBars(dst *ebiten.Image) {
 		if height > 0 && yPos < 72 {
 			op := &ebiten.DrawImageOptions{}
 
-			// Source rectangle: 2 pixels high from bars
-			srcRect := image.Rect(0, cc, barsWidth, cc+2)
-			if srcRect.Max.Y > barsHeight {
-				srcRect.Max.Y = barsHeight
-			}
-
 			// Scale to stretch the 2 pixels
 			scaleY := float64(height) / 2.0
 
 			op.GeoM.Scale(1, scaleY)
 			op.GeoM.Translate(float64(xPos), float64(yPos))
 
-			dst.DrawImage(g.barsImg.SubImage(srcRect).(*ebiten.Image), op)
+			dst.DrawImage(g.barStrips[cc/2], op)
 		}
 
 		// Cycle through the bars
@@ -1384,5 +1211,6 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	if logicalWidth < screenWidth {
 		logicalWidth = screenWidth
 	}
+	g.logicalWidth = logicalWidth
 	return logicalWidth, screenHeight
 }

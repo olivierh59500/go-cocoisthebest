@@ -4,7 +4,7 @@ go 1.25.1
 
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.9.11
-	github.com/olivierh59500/ym-player v0.0.0-20250607015657-bb5818debd02
+	github.com/olivierh59500/ym-player v0.0.0-20260913215440-3f73bdca82e5
 )
 
 require (
