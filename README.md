@@ -14,12 +14,23 @@ git clone https://github.com/olivierh59500/go-cocoisthebest.git
 cd go-cocoisthebest
 
 # Run the demo
-go run main.go
+go run ./cmd/cocoisthebest
 
 # Or build it
-go build -o cocoisthebest main.go
+go build -o cocoisthebest ./cmd/cocoisthebest
 ./cocoisthebest
 ```
+
+### Android (Pixel en USB)
+
+Avec le SDK Android, Java 17 et un unique appareil ADB autorisé :
+
+```bash
+./scripts/run-android.sh
+```
+
+Le script génère l’AAR arm64, construit l’APK de débogage, l’installe puis
+lance `com.olivierh.cocoisthebest/.MainActivity`.
 
 ## 🎭 The Effects
 

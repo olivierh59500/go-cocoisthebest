@@ -1,4 +1,5 @@
-package main
+// Package coco implements the COCO IS THE BEST demo.
+package coco
 
 import (
 	"bytes"
@@ -24,17 +25,24 @@ const (
 	screenHeight = 600
 
 	// Constants for effects
-	nbCubes      = 12
-	nbDMALogos   = 16
-	scrollSpeed  = 4.0
-	fontHeight   = 36
+	nbCubes            = 12
+	nbDMALogos         = 16
+	scrollSpeed        = 4.0
+	fontHeight         = 36
 	scrollFontCharSize = 32
 
-	// Canvas sizes
-	canvasWidth  = screenWidth * 8
-	canvasHeight = screenHeight * 8
+	// The rotozoom quad is deliberately larger than the scene so rotations and
+	// oscillations never reveal its edges. Its texture is repeated by the GPU.
+	rotoWidth  = screenWidth * 4
+	rotoHeight = screenHeight * 4
 
 	sampleRate = 44100
+
+	// LogicalScreenWidth and LogicalScreenHeight are the dimensions of the
+	// original 4:3 scene. Wider displays add centered side areas instead of
+	// stretching the artwork.
+	LogicalScreenWidth  = screenWidth
+	LogicalScreenHeight = screenHeight
 )
 
 // Embedded assets
@@ -71,14 +79,14 @@ const (
 
 // YMPlayer wraps the YM player for Ebiten audio
 type YMPlayer struct {
-	player       *stsound.StSound
-	sampleRate   int
-	buffer       []int16
-	mutex        sync.Mutex
-	position     int64
-	totalSamples int64
-	loop         bool
-	volume       float64
+	player     *stsound.StSound
+	sampleRate int
+	buffer     []int16
+	mutex      sync.Mutex
+	position   int64 // byte offset in the stereo 16-bit PCM stream
+	totalBytes int64
+	loop       bool
+	volume     float64
 }
 
 // NewYMPlayer creates a new YM player instance
@@ -96,12 +104,12 @@ func NewYMPlayer(data []byte, sampleRate int, loop bool) (*YMPlayer, error) {
 	totalSamples := int64(info.MusicTimeInMs) * int64(sampleRate) / 1000
 
 	return &YMPlayer{
-		player:       player,
-		sampleRate:   sampleRate,
-		buffer:       make([]int16, 4096),
-		totalSamples: totalSamples,
-		loop:         loop,
-		volume:       0.7,
+		player:     player,
+		sampleRate: sampleRate,
+		buffer:     make([]int16, 4096),
+		totalBytes: totalSamples * 4,
+		loop:       loop,
+		volume:     0.7,
 	}, nil
 }
 
@@ -109,9 +117,11 @@ func (y *YMPlayer) Read(p []byte) (n int, err error) {
 	y.mutex.Lock()
 	defer y.mutex.Unlock()
 
-	samplesNeeded := len(p) / 4
-	outBuffer := make([]int16, samplesNeeded*2)
+	if y.player == nil {
+		return 0, io.ErrClosedPipe
+	}
 
+	samplesNeeded := len(p) / 4
 	processed := 0
 	for processed < samplesNeeded {
 		chunkSize := samplesNeeded - processed
@@ -121,36 +131,25 @@ func (y *YMPlayer) Read(p []byte) (n int, err error) {
 
 		if !y.player.Compute(y.buffer[:chunkSize], chunkSize) {
 			if !y.loop {
-				for i := processed * 2; i < len(outBuffer); i++ {
-					outBuffer[i] = 0
-				}
-				err = io.EOF
-				break
+				clear(p[processed*4 : samplesNeeded*4])
+				return samplesNeeded * 4, io.EOF
 			}
 		}
 
 		for i := 0; i < chunkSize; i++ {
 			sample := int16(float64(y.buffer[i]) * y.volume)
-			outBuffer[(processed+i)*2] = sample
-			outBuffer[(processed+i)*2+1] = sample
+			offset := (processed + i) * 4
+			p[offset] = byte(sample)
+			p[offset+1] = byte(sample >> 8)
+			p[offset+2] = byte(sample)
+			p[offset+3] = byte(sample >> 8)
 		}
 
 		processed += chunkSize
-		y.position += int64(chunkSize)
+		y.position += int64(chunkSize * 4)
 	}
 
-	buf := make([]byte, 0, len(outBuffer)*2)
-	for _, sample := range outBuffer {
-		buf = append(buf, byte(sample), byte(sample>>8))
-	}
-
-	copy(p, buf)
-	n = len(buf)
-	if n > len(p) {
-		n = len(p)
-	}
-
-	return n, err
+	return samplesNeeded * 4, nil
 }
 
 func (y *YMPlayer) Seek(offset int64, whence int) (int64, error) {
@@ -164,7 +163,7 @@ func (y *YMPlayer) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		newPos = y.position + offset
 	case io.SeekEnd:
-		newPos = y.totalSamples + offset
+		newPos = y.totalBytes + offset
 	default:
 		return 0, fmt.Errorf("invalid whence: %d", whence)
 	}
@@ -172,8 +171,22 @@ func (y *YMPlayer) Seek(offset int64, whence int) (int64, error) {
 	if newPos < 0 {
 		newPos = 0
 	}
-	if newPos > y.totalSamples {
-		newPos = y.totalSamples
+	if newPos > y.totalBytes {
+		newPos = y.totalBytes
+	}
+	newPos = newPos / 4 * 4
+
+	if y.player == nil {
+		return 0, io.ErrClosedPipe
+	}
+	if !y.player.IsSeekable() {
+		if newPos != 0 {
+			return y.position, fmt.Errorf("YM stream is not seekable")
+		}
+		y.player.Restart()
+	} else {
+		timeInMs := (newPos / 4) * 1000 / int64(y.sampleRate)
+		y.player.Seek(uint32(timeInMs))
 	}
 
 	y.position = newPos
@@ -200,6 +213,11 @@ func (y *YMPlayer) GetVolume() float64 {
 func (y *YMPlayer) SetVolume(vol float64) {
 	y.mutex.Lock()
 	defer y.mutex.Unlock()
+	if vol < 0 {
+		vol = 0
+	} else if vol > 1 {
+		vol = 1
+	}
 	y.volume = vol
 }
 
@@ -470,16 +488,16 @@ func Fragment(position vec4, texCoord vec2, color vec4) vec4 {
 // Game state
 type Game struct {
 	// Images
-	titleImg    *ebiten.Image
-	barsImg     *ebiten.Image
-	cocoImg     *ebiten.Image
-	dmaLogoImg  *ebiten.Image
-	fontImg     *ebiten.Image
+	titleImg   *ebiten.Image
+	barsImg    *ebiten.Image
+	cocoImg    *ebiten.Image
+	dmaLogoImg *ebiten.Image
+	fontImg    *ebiten.Image
 
 	// Canvases
 	introCanvas *ebiten.Image
+	introStrip  *ebiten.Image
 	mainCanvas  *ebiten.Image
-	cocoCanvas  *ebiten.Image
 	scrollSurf  *ebiten.Image
 	titleCanvas *ebiten.Image
 
@@ -487,67 +505,69 @@ type Game struct {
 	audioContext *audio.Context
 	audioPlayer  *audio.Player
 	ymPlayer     *YMPlayer
+	audioReady   bool
 
 	// State
-	state          string // "intro" or "demo"
-	introComplete  bool
-	iteration      int
+	state         string // "intro" or "demo"
+	introComplete bool
+	iteration     int
 
 	// Intro scrolling
-	introX         int
-	introLetter    int
-	introTile      int
-	introSpeed     int
-	introText      string
-	surfScroll1    *ebiten.Image
-	surfScroll2    *ebiten.Image
+	introX      int
+	introLetter int
+	introTile   int
+	introSpeed  int
+	introText   string
+	surfScroll1 *ebiten.Image
+	surfScroll2 *ebiten.Image
 
 	// Font data
-	letterData     map[rune]*Letter
+	letterData map[rune]*Letter
 
 	// CRT Shader
-	crtShader      *ebiten.Shader
+	crtShader *ebiten.Shader
 
 	// Demo effects
 	// Copper bars
-	cnt            int
-	cnt2           int
-	copperSin      []int
+	cnt       int
+	cnt2      int
+	copperSin []int
 
 	// 3D Cubes
-	cubes          []*Cube3D
-	spritePos      []float64
+	cubes     []*Cube3D
+	spritePos []float64
 
 	// DMA logo sprites (16 logos in 4x4 grid)
-	dmaSprites     [nbDMALogos]DMASprite
-	ctrSprite      float64
+	dmaSprites [nbDMALogos]DMASprite
+	ctrSprite  float64
 
 	// Scrolling text (megatwist style)
-	frontWavePos   int
-	letterNum      int
-	letterDecal    int
-	curves         [][]int
-	frontMainWave  []int
-	position       []int
-	scrollText     string
+	frontWavePos    int
+	letterNum       int
+	letterDecal     int
+	curves          [][]int
+	frontMainWave   []int
+	position        []int
+	scrollText      string
 	scrollTextRunes []rune
 
 	// Rotozoom
-	posXi          float64
-	posZi          float64
-	posRi          float64
+	posXi        float64
+	posZi        float64
+	posRi        float64
+	rotoVertices [4]ebiten.Vertex
 
 	// Title logo animation
-	logoX          float64
-	hold           int
-	rasterY1       float64
-	rasterY2       float64
+	logoX    float64
+	hold     int
+	rasterY1 float64
+	rasterY2 float64
 
 	// Speed control
 	speedMultiplier float64
 
 	// VBL counter
-	vbl            int
+	vbl int
 }
 
 type DMASprite struct {
@@ -565,7 +585,7 @@ func NewGame() *Game {
 		spritePos:       make([]float64, nbCubes),
 		speedMultiplier: 1.0,
 		logoX:           0.5, // Center the logo (0.5 = centered)
-		hold:            0, // Start immediately
+		hold:            0,   // Start immediately
 	}
 
 	// Init intro text
@@ -583,25 +603,23 @@ func NewGame() *Game {
 
 	// Create canvases
 	g.introCanvas = ebiten.NewImage(screenWidth, screenHeight)
+	g.introStrip = ebiten.NewImage(screenWidth, int(fontHeight*2))
 	g.mainCanvas = ebiten.NewImage(screenWidth, screenHeight)
-	g.cocoCanvas = ebiten.NewImage(canvasWidth, canvasHeight)
 	g.surfScroll1 = ebiten.NewImage(screenWidth+96, int(fontHeight*2))
 	g.surfScroll2 = ebiten.NewImage(screenWidth+96, int(fontHeight*2))
 	g.scrollSurf = ebiten.NewImage(int(float64(screenWidth)*2.0), int(fontHeight*3))
 	g.titleCanvas = ebiten.NewImage(screenWidth, 72)
 
-	// Create rotozoom canvas with tiled Coco image
-	if g.cocoImg != nil {
-		cocoW := g.cocoImg.Bounds().Dx()
-		cocoH := g.cocoImg.Bounds().Dy()
-		for y := 0; y < canvasHeight; y += cocoH {
-			for x := 0; x < canvasWidth; x += cocoW {
-				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Translate(float64(x), float64(y))
-				g.cocoCanvas.DrawImage(g.cocoImg, op)
-			}
-		}
+	for i := range g.rotoVertices {
+		g.rotoVertices[i].ColorR = 0.5
+		g.rotoVertices[i].ColorG = 0.5
+		g.rotoVertices[i].ColorB = 0.5
+		g.rotoVertices[i].ColorA = 1
 	}
+	g.rotoVertices[1].SrcX = rotoWidth
+	g.rotoVertices[2].SrcY = rotoHeight
+	g.rotoVertices[3].SrcX = rotoWidth
+	g.rotoVertices[3].SrcY = rotoHeight
 
 	// Init font
 	g.initFontData()
@@ -623,9 +641,6 @@ func NewGame() *Game {
 	g.createCurves()
 	g.precalcPosition()
 	g.precalcMainWave()
-
-	// Init audio
-	g.initAudio()
 
 	// Init copper bars sine table
 	g.initCopperSin()
@@ -885,6 +900,13 @@ func (g *Game) getIntroLetter(pos int) rune {
 }
 
 func (g *Game) Update() error {
+	// On Android, NewGame runs while the native library is loaded. Opening the
+	// audio device there can block before the Activity has installed its view.
+	if !g.audioReady {
+		g.audioReady = true
+		g.initAudio()
+	}
+
 	// Volume control
 	if g.ymPlayer != nil {
 		if ebiten.IsKeyPressed(ebiten.KeyUp) {
@@ -991,8 +1013,8 @@ func (g *Game) updateDemo() {
 	g.ctrSprite += 0.02
 
 	// Base movement for all sprites (synchronized)
-	baseX := 100 * math.Sin(g.ctrSprite*1.35+1.25) + 100 * math.Sin(g.ctrSprite*1.86+0.54)
-	baseY := 60 * math.Cos(g.ctrSprite*1.72+0.23) + 60 * math.Cos(g.ctrSprite*1.63+0.98)
+	baseX := 100*math.Sin(g.ctrSprite*1.35+1.25) + 100*math.Sin(g.ctrSprite*1.86+0.54)
+	baseY := 60*math.Cos(g.ctrSprite*1.72+0.23) + 60*math.Cos(g.ctrSprite*1.63+0.98)
 
 	for i := 0; i < nbDMALogos; i++ {
 		// 4x4 grid pattern
@@ -1029,23 +1051,29 @@ func (g *Game) updateDemo() {
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
 
+	var scene *ebiten.Image
 	if g.state == "intro" {
-		g.drawIntro(screen)
+		g.drawIntro(g.introCanvas)
+		scene = g.introCanvas
 	} else {
-		g.drawDemo(screen)
+		g.drawDemo()
+		scene = g.mainCanvas
 	}
+
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(float64((screen.Bounds().Dx()-screenWidth)/2), 0)
+	screen.DrawImage(scene, op)
 }
 
 func (g *Game) drawIntro(screen *ebiten.Image) {
-	g.introCanvas.Fill(color.Black)
+	screen.Fill(color.Black)
 
 	if g.crtShader != nil {
-		tmpImg := ebiten.NewImage(screenWidth, int(fontHeight*2))
-		tmpImg.Clear()
-		tmpImg.DrawImage(g.surfScroll1, nil)
+		g.introStrip.Clear()
+		g.introStrip.DrawImage(g.surfScroll1, nil)
 
 		op := &ebiten.DrawRectShaderOptions{}
-		op.Images[0] = tmpImg
+		op.Images[0] = g.introStrip
 		op.GeoM.Translate(0, float64(screenHeight/2-int(fontHeight*2)/2))
 
 		screen.DrawRectShader(screenWidth, int(fontHeight*2), g.crtShader, op)
@@ -1056,7 +1084,7 @@ func (g *Game) drawIntro(screen *ebiten.Image) {
 	}
 }
 
-func (g *Game) drawDemo(screen *ebiten.Image) {
+func (g *Game) drawDemo() {
 	g.mainCanvas.Fill(color.RGBA{0x00, 0x00, 0x30, 0xFF})
 
 	// Order of rendering (back to front):
@@ -1075,10 +1103,13 @@ func (g *Game) drawDemo(screen *ebiten.Image) {
 	// 5. Title logo with copper bars on top (always on top)
 	g.drawTitleWithCopperbars(g.mainCanvas)
 
-	screen.DrawImage(g.mainCanvas, nil)
 }
 
 func (g *Game) drawRotozoom(dst *ebiten.Image) {
+	if g.cocoImg == nil {
+		return
+	}
+
 	zoom := 0.5 + math.Abs(math.Sin(g.posZi)*2.5)
 	rot := 360.0 / 4.0 * math.Cos(g.posRi*4-math.Cos(g.posRi-0.01)) * 0.3 * math.Pi / 180
 
@@ -1088,13 +1119,20 @@ func (g *Game) drawRotozoom(dst *ebiten.Image) {
 	centerX := float64(screenWidth)/2 + oscX
 	centerY := float64(screenHeight)/2 + oscY
 
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Translate(-float64(canvasWidth)/2, -float64(canvasHeight)/2)
-	op.GeoM.Rotate(rot)
-	op.GeoM.Scale(zoom, zoom)
-	op.GeoM.Translate(centerX, centerY)
-	op.ColorScale.Scale(0.5, 0.5, 0.5, 1.0) // Darken background
-	dst.DrawImage(g.cocoCanvas, op)
+	cosRot, sinRot := math.Cos(rot), math.Sin(rot)
+	setDestination := func(index int, x, y float64) {
+		x -= float64(rotoWidth) / 2
+		y -= float64(rotoHeight) / 2
+		g.rotoVertices[index].DstX = float32((x*cosRot-y*sinRot)*zoom + centerX)
+		g.rotoVertices[index].DstY = float32((x*sinRot+y*cosRot)*zoom + centerY)
+	}
+	setDestination(0, 0, 0)
+	setDestination(1, rotoWidth, 0)
+	setDestination(2, 0, rotoHeight)
+	setDestination(3, rotoWidth, rotoHeight)
+
+	op := &ebiten.DrawTrianglesOptions{Address: ebiten.AddressRepeat}
+	dst.DrawTriangles(g.rotoVertices[:], []uint16{0, 1, 2, 1, 2, 3}, g.cocoImg, op)
 }
 
 func (g *Game) drawDMALogos(dst *ebiten.Image) {
@@ -1118,7 +1156,7 @@ func (g *Game) drawDMALogos(dst *ebiten.Image) {
 
 func (g *Game) drawScrollText(dst *ebiten.Image) {
 	// Update wave position with speed multiplier for amplitude
-//	g.frontWavePos = int(float64(g.iteration) * 10.0 * g.speedMultiplier)
+	//	g.frontWavePos = int(float64(g.iteration) * 10.0 * g.speedMultiplier)
 	g.frontWavePos = int(float64(g.iteration) * 10.0 * 1.5)
 
 	// Calculate horizontal offset
@@ -1167,7 +1205,7 @@ func (g *Game) drawScrollText(dst *ebiten.Image) {
 	scaledFontHeight := int(fontHeight * 3.0)
 
 	// Render each line with distortion - cover full screen height (below banner)
-	baseY := 72 // Start just below the banner
+	baseY := 72                     // Start just below the banner
 	totalLines := screenHeight - 72 // Total lines from banner to bottom
 	for ligne := 0; ligne < totalLines; ligne++ {
 		sourceFontLine := ligne / 3
@@ -1338,17 +1376,13 @@ func (g *Game) drawCopperBars(dst *ebiten.Image) {
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return screenWidth, screenHeight
-}
-
-func main() {
-	ebiten.SetWindowSize(screenWidth, screenHeight)
-	ebiten.SetWindowTitle("COCO IS THE BEST - DMA 2025")
-	ebiten.SetWindowResizable(true)
-
-	game := NewGame()
-
-	if err := ebiten.RunGame(game); err != nil {
-		log.Fatal(err)
+	if outsideHeight <= 0 {
+		return screenWidth, screenHeight
 	}
+
+	logicalWidth := outsideWidth * screenHeight / outsideHeight
+	if logicalWidth < screenWidth {
+		logicalWidth = screenWidth
+	}
+	return logicalWidth, screenHeight
 }

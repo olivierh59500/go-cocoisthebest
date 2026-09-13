@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+/cocoisthebest
 
 # Test binary, built with `go test -c`
 *.test
@@ -30,3 +31,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# macOS metadata
+.DS_Store
+
+# Android generated files
+android/.gradle/
+android/build/
+android/app/build/
+android/app/libs/*.aar
+android/app/libs/*-sources.jar
+android/local.properties
