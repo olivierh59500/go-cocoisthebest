@@ -129,3 +129,9 @@ Found a bug? Want to add another effect? Pull requests welcome! Let's keep the d
 **Made with ❤️ and an unreasonable number of sine waves**
 
 *"If you think this is all, you're so wrong..."*
+
+## Optional DCK version
+
+The original implementation remains at its original paths. Run it with `go run ./cmd/cocoisthebest`.
+
+The construction-kit version is in [dck/](dck/README.md). Run `go run ./dck/cmd/cocoisthebest` from this directory. Both versions share the original assets.

@@ -1,9 +1,13 @@
 // Package coco implements the COCO IS THE BEST demo.
 package coco
 
+import originalassets "github.com/olivierh59500/go-cocoisthebest"
+
 import (
 	"bytes"
-	_ "embed"
+
+	"github.com/olivierh59500/democonstructionkit/composite"
+	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"image"
 	"image/color"
 	_ "image/png"
@@ -45,26 +49,26 @@ const (
 )
 
 // Embedded assets
-//
-//go:embed assets/dma-70.png
-var titleImgData []byte
+var titleImgData = originalassets.
+	DCKAssetTitleImgData()
 
-//go:embed assets/bars.png
-var barsImgData []byte
+var barsImgData = originalassets.
+	DCKAssetBarsImgData()
 
-//go:embed assets/coco.png
-var cocoImgData []byte
+var cocoImgData = originalassets.
+	DCKAssetCocoImgData()
 
-//go:embed assets/small-dma-jelly.png
-var dmaLogoImgData []byte
+var dmaLogoImgData = originalassets.
+	DCKAssetDmaLogoImgData()
 
-//go:embed assets/font.png
-var fontImgData []byte
+var fontImgData = originalassets.
+	DCKAssetFontImgData()
 
-//go:embed assets/mindbomb.ym
-var musicData []byte
+var musicData = originalassets.
 
-// Wave types for distortion
+	// Wave types for distortion
+	DCKAssetMusicData()
+
 const (
 	cdZero = iota
 	cdSlowSin
@@ -328,6 +332,8 @@ func Fragment(position vec4, texCoord vec2, color vec4) vec4 {
 
 // Game state
 type Game struct {
+	scrollRenderer *scrolling.Scrolling
+	stripBatch     *composite.QuadBatch
 	// Images
 	titleImg   *ebiten.Image
 	barsImg    *ebiten.Image
@@ -1038,84 +1044,61 @@ func (g *Game) drawDMALogos(dst *ebiten.Image) {
 
 func (g *Game) drawScrollText(dst *ebiten.Image) {
 	g.frontWavePos = int(g.demoTime * 15)
-
 	decalX := g.scrollOffset(g.frontWavePos)
-
-	// Calculate the first visible letter. letterNum is deliberately unbounded:
-	// getPosition and getLetter repeat their source tables for seamless loops.
 	g.advanceScrollLetter(decalX)
-
-	// The surface content changes only when the first visible letter changes.
 	if g.displayedLetter != g.letterNum {
 		g.displayText(g.letterNum)
 		g.displayedLetter = g.letterNum
 	}
-
-	// Calculate bounce effect
-	bounce := int(math.Floor(18.0 * math.Abs(math.Sin(g.demoTime*0.1))))
-
-	scrollWidth := g.scrollSurf.Bounds().Dx()
-	scaledFontHeight := int(fontHeight * 3.0)
-
-	// Build one mesh containing every distorted scanline. AddressRepeat replaces
-	// the previous split-rectangle wrapping and lets Ebitengine submit one draw.
-	baseY := 72                     // Start just below the banner
-	totalLines := screenHeight - 72 // Total lines from banner to bottom
-	for ligne := 0; ligne < totalLines; ligne++ {
-		sourceFontLine := ligne / 3
-
-		frontWave := g.getWave(g.frontWavePos + sourceFontLine)
-		scrollXRaw := frontWave - g.letterDecal
-
-		scaledLine := ((sourceFontLine+bounce)%fontHeight)*3 + (ligne % 3)
-
-		scaledLine %= scaledFontHeight
-
-		dstX0 := 0
-		dstX1 := screenWidth
-		srcX0 := scrollXRaw % scrollWidth
-		if scrollXRaw < 0 {
-			dstX0 = min(-scrollXRaw, screenWidth)
-			srcX0 = 0
-		}
-		srcX1 := srcX0 + dstX1 - dstX0
-
-		vertexBase := ligne * 4
-		vertices := g.scrollVertices[vertexBase : vertexBase+4]
-		vertices[0].DstX, vertices[0].DstY = float32(dstX0), float32(baseY+ligne)
-		vertices[0].SrcX, vertices[0].SrcY = float32(srcX0), float32(scaledLine)
-		vertices[1].DstX, vertices[1].DstY = float32(dstX1), float32(baseY+ligne)
-		vertices[1].SrcX, vertices[1].SrcY = float32(srcX1), float32(scaledLine)
-		vertices[2].DstX, vertices[2].DstY = float32(dstX0), float32(baseY+ligne+1)
-		vertices[2].SrcX, vertices[2].SrcY = float32(srcX0), float32(scaledLine+1)
-		vertices[3].DstX, vertices[3].DstY = float32(dstX1), float32(baseY+ligne+1)
-		vertices[3].SrcX, vertices[3].SrcY = float32(srcX1), float32(scaledLine+1)
+	bounce := int(math.Floor(18 * math.Abs(math.Sin(g.demoTime*.1))))
+	width := g.scrollSurf.Bounds().Dx()
+	height := int(fontHeight * 3.0)
+	baseY := 72
+	lines := screenHeight - 72
+	if g.stripBatch == nil {
+		g.stripBatch = composite.NewQuadBatch(lines)
+		g.stripBatch.AlternateDiagonal = true
+		g.stripBatch.Options.Address = ebiten.AddressRepeat
 	}
-
-	op := &ebiten.DrawTrianglesOptions{Address: ebiten.AddressRepeat}
-	dst.DrawTriangles(g.scrollVertices, g.scrollIndices, g.scrollSurf, op)
+	g.stripBatch.Begin(dst, g.scrollSurf)
+	for line := 0; line < lines; line++ {
+		sourceLine := line / 3
+		raw := g.getWave(g.frontWavePos+sourceLine) - g.letterDecal
+		sy := (((sourceLine+bounce)%fontHeight)*3 + line%3) % height
+		dx := 0
+		sx := raw % width
+		if raw < 0 {
+			dx = min(-raw, screenWidth)
+			sx = 0
+		}
+		w := screenWidth - dx
+		g.stripBatch.Rect(image.Rect(sx, sy, sx+w, sy+1), float32(dx), float32(baseY+line), float32(w), 1)
+	}
+	g.stripBatch.Flush()
 }
 
 func (g *Game) displayText(letterOffset int) {
 	g.scrollSurf.Clear()
-
-	xPos := 0
-	i := 0
-	maxWidth := g.scrollSurf.Bounds().Dx()
-
-	for xPos < maxWidth {
-		char := g.getLetter(i + letterOffset)
-		if letter, ok := g.letterData[char]; ok {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Scale(3.0, 3.0)
-			op.GeoM.Translate(float64(xPos), 0)
-			g.scrollSurf.DrawImage(letter.glyph, op)
-			xPos += int(float64(letter.width) * 3.0)
-		} else {
-			xPos += 32 * 3
+	if g.scrollRenderer == nil {
+		glyphs := make([]scrolling.Glyph, len(g.scrollTextRunes))
+		for i, r := range g.scrollTextRunes {
+			if letter, ok := g.letterData[r]; ok {
+				glyphs[i] = scrolling.Glyph{Image: letter.glyph, Advance: float64(letter.width)}
+			} else {
+				glyphs[i] = scrolling.Glyph{Advance: 32}
+			}
 		}
-		i++
+		var err error
+		g.scrollRenderer, err = scrolling.New(scrolling.Config{Glyphs: glyphs})
+		if err != nil {
+			panic(err)
+		}
 	}
+	state := g.scrollRenderer.Window(letterOffset, float64(g.scrollSurf.Bounds().Dx())/3)
+	state.ScaleX = 3
+	state.ScaleY = 3
+	state.X *= 3
+	g.scrollRenderer.DrawAt(g.scrollSurf, state)
 }
 
 func (g *Game) draw3DCubes(dst *ebiten.Image) {
