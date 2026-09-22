@@ -5,6 +5,7 @@ import originalassets "github.com/olivierh59500/go-cocoisthebest"
 
 import (
 	"bytes"
+	"github.com/olivierh59500/democonstructionkit/presets"
 
 	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
@@ -624,79 +625,11 @@ func (g *Game) initBarStrips() {
 }
 
 func (g *Game) createCurves() {
-	for funcType := 0; funcType <= 7; funcType++ {
-		var step, progress float64
-
-		switch funcType {
-		case cdZero:
-			step, progress = 2.25, 0
-		case cdSlowSin:
-			step, progress = 0.20, 140
-		case cdMedSin:
-			step, progress = 0.25, 175
-		case cdFastSin:
-			step, progress = 0.30, 210
-		case cdSlowDist:
-			step, progress = 0.12, 175
-		case cdMedDist:
-			step, progress = 0.16, 210
-		case cdFastDist:
-			step, progress = 0.20, 245
-		case cdSplitted:
-			step, progress = 0.18, 0
-		}
-
-		local := []float64{}
-		decal := 0.0
-		previous := 0
-		maxAngle := 360.0
-		if funcType == cdSplitted {
-			maxAngle = 720.0
-		}
-
-		for i := 0.0; i < maxAngle-step; i += step {
-			val := 0.0
-			rad := i * math.Pi / 180
-
-			switch funcType {
-			case cdZero:
-				val = 0
-			case cdSlowSin:
-				val = 100 * math.Sin(rad)
-			case cdMedSin:
-				val = 110 * math.Sin(rad)
-			case cdFastSin:
-				val = 120 * math.Sin(rad)
-			case cdSlowDist:
-				val = 100*math.Sin(rad) + 25.0*math.Sin(rad*10)
-			case cdMedDist:
-				val = 110*math.Sin(rad) + 27.5*math.Sin(rad*9)
-			case cdFastDist:
-				val = 120*math.Sin(rad) + 30.0*math.Sin(rad*8)
-			case cdSplitted:
-				dir := 1.0
-				if len(local)%2 == 1 {
-					dir = -1.0
-				}
-				amp := 12.0
-				if i < 160 {
-					amp *= i / 160
-				} else if (720 - 160) < i {
-					amp *= (720 - i) / 160
-				}
-				val = 90*math.Sin(rad) + dir*amp*math.Sin(rad*3)
-			}
-			local = append(local, val)
-		}
-
-		g.curves[funcType] = make([]int, len(local))
-		for i := 0; i < len(local); i++ {
-			nitem := -int(math.Floor(local[i] - decal))
-			g.curves[funcType][i] = nitem - previous
-			previous = nitem
-			decal += progress / float64(len(local))
-		}
+	curves, err := presets.RibbonCurves(1)
+	if err != nil {
+		panic(err)
 	}
+	copy(g.curves[:], curves[:8])
 }
 
 func (g *Game) precalcPosition() {
@@ -719,15 +652,10 @@ func (g *Game) precalcMainWave() {
 		cdSplitted,
 	}
 
-	count := 0
-	g.frontMainWave = []int{}
-
-	for _, waveType := range frontMainWaveTable {
-		wave := g.curves[waveType]
-		for _, val := range wave {
-			count += val
-			g.frontMainWave = append(g.frontMainWave, count)
-		}
+	var err error
+	g.frontMainWave, err = composite.JoinDeltaCurves(g.curves[:], frontMainWaveTable)
+	if err != nil {
+		panic(err)
 	}
 }
 
@@ -758,15 +686,7 @@ func (g *Game) initScrollMesh() {
 }
 
 func (g *Game) getSum(arr []int, index, decal int) int {
-	n := len(arr)
-	if n == 0 {
-		return decal
-	}
-
-	maxVal := arr[n-1]
-	f := index / n
-	m := index % n
-	return decal + f*maxVal + arr[m]
+	return composite.CumulativeAt(arr, index, decal)
 }
 
 func (g *Game) getWave(i int) int {
