@@ -7,6 +7,8 @@ import (
 	"image/color"
 
 	"github.com/olivierh59500/democonstructionkit/composite"
+	"github.com/olivierh59500/democonstructionkit/effects"
+	"github.com/olivierh59500/democonstructionkit/geometry"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
@@ -83,212 +85,12 @@ const (
 	cdSplitted
 )
 
-// Letter for font rendering
-type Letter struct {
-	x, y  int
-	width int
-	glyph *ebiten.Image
-}
-
-// Cube3D represents a 3D cube
-type Cube3D struct {
-	angleX float64
-	angleY float64
-	angleZ float64
-	size   float64
-
-	rotated      [8][3]float64
-	projected    [8][2]float64
-	depths       [6]faceDepth
-	faceVertices [4]ebiten.Vertex
-	edgeVertices [4]ebiten.Vertex
-	visibleFaces int
-}
-
-type faceDepth struct {
-	index int
-	depth float64
-}
-
 type gameState uint8
 
 const (
 	gameStateIntro gameState = iota
 	gameStateDemo
 )
-
-var (
-	cubeVertices = [8][3]float64{
-		{-1, -1, -1},
-		{1, -1, -1},
-		{1, 1, -1},
-		{-1, 1, -1},
-		{-1, -1, 1},
-		{1, -1, 1},
-		{1, 1, 1},
-		{-1, 1, 1},
-	}
-	cubeFaces = [6][4]int{
-		{0, 3, 2, 1},
-		{4, 5, 6, 7},
-		{0, 1, 5, 4},
-		{2, 3, 7, 6},
-		{0, 4, 7, 3},
-		{1, 2, 6, 5},
-	}
-	cubeFaceColors = [6]color.RGBA{
-		{R: 255, G: 140, A: 255},
-		{R: 255, G: 165, B: 50, A: 255},
-		{R: 255, G: 180, B: 80, A: 255},
-		{R: 255, G: 120, A: 255},
-		{R: 255, G: 150, B: 30, A: 255},
-		{R: 255, G: 200, B: 100, A: 255},
-	}
-	cubeFaceIndices = [6]uint16{0, 1, 2, 0, 2, 3}
-)
-
-func NewCube3D(size float64) *Cube3D {
-	return &Cube3D{
-		size: size,
-	}
-}
-
-func (c *Cube3D) Rotate(dx, dy, dz float64) {
-	c.angleX += dx
-	c.angleY += dy
-	c.angleZ += dz
-}
-
-// project3D projects 3D coordinates to 2D
-func project3D(x, y, z float64) (float64, float64) {
-	const perspective = 200.0
-	factor := perspective / (perspective + z)
-	return x * factor, y * factor
-}
-
-func (c *Cube3D) updateGeometry(centerX, centerY float64) {
-	cosX, sinX := math.Cos(c.angleX), math.Sin(c.angleX)
-	cosY, sinY := math.Cos(c.angleY), math.Sin(c.angleY)
-	cosZ, sinZ := math.Cos(c.angleZ), math.Sin(c.angleZ)
-	halfSize := c.size / 2
-
-	for i, vertex := range cubeVertices {
-		x := vertex[0] * halfSize
-		y := vertex[1] * halfSize
-		z := vertex[2] * halfSize
-
-		y1 := y*cosX - z*sinX
-		z1 := y*sinX + z*cosX
-		y, z = y1, z1
-
-		x1 := x*cosY + z*sinY
-		z2 := -x*sinY + z*cosY
-		x, z = x1, z2
-
-		x2 := x*cosZ - y*sinZ
-		y2 := x*sinZ + y*cosZ
-		x, y = x2, y2
-
-		c.rotated[i] = [3]float64{x, y, z}
-		x2D, y2D := project3D(x, y, z)
-		c.projected[i] = [2]float64{centerX + x2D, centerY + y2D}
-	}
-
-	c.visibleFaces = 0
-	for i, face := range cubeFaces {
-		a := c.rotated[face[0]]
-		b := c.rotated[face[1]]
-		d := c.rotated[face[2]]
-		abX, abY, abZ := b[0]-a[0], b[1]-a[1], b[2]-a[2]
-		adX, adY, adZ := d[0]-a[0], d[1]-a[1], d[2]-a[2]
-		normalX := abY*adZ - abZ*adY
-		normalY := abZ*adX - abX*adZ
-		normalZ := abX*adY - abY*adX
-
-		centerX, centerY := 0.0, 0.0
-		centerZ := 0.0
-		for _, vi := range face {
-			centerX += c.rotated[vi][0]
-			centerY += c.rotated[vi][1]
-			centerZ += c.rotated[vi][2]
-		}
-		centerX /= 4
-		centerY /= 4
-		centerZ /= 4
-
-		// The camera is at (0, 0, -200). Discard faces whose outward
-		// normal points away from it.
-		facing := normalX*-centerX + normalY*-centerY + normalZ*(-200-centerZ)
-		if facing <= 0 {
-			continue
-		}
-		c.depths[c.visibleFaces] = faceDepth{index: i, depth: centerZ}
-		c.visibleFaces++
-	}
-
-	// Larger Z is farther from the camera and must be painted first.
-	for i := 1; i < c.visibleFaces; i++ {
-		for j := i; j > 0 && c.depths[j-1].depth < c.depths[j].depth; j-- {
-			c.depths[j-1], c.depths[j] = c.depths[j], c.depths[j-1]
-		}
-	}
-}
-
-func setColoredVertex(vertex *ebiten.Vertex, x, y float64, clr color.RGBA) {
-	vertex.DstX = float32(x)
-	vertex.DstY = float32(y)
-	vertex.SrcX = 1
-	vertex.SrcY = 1
-	vertex.ColorR = float32(clr.R) / 0xff
-	vertex.ColorG = float32(clr.G) / 0xff
-	vertex.ColorB = float32(clr.B) / 0xff
-	vertex.ColorA = float32(clr.A) / 0xff
-}
-
-func (c *Cube3D) drawEdge(screen, fillImage *ebiten.Image, from, to [2]float64, clr color.RGBA) {
-	dx, dy := to[0]-from[0], to[1]-from[1]
-	length := math.Hypot(dx, dy)
-	if length == 0 {
-		return
-	}
-	offsetX := -dy / length / 2
-	offsetY := dx / length / 2
-	setColoredVertex(&c.edgeVertices[0], from[0]+offsetX, from[1]+offsetY, clr)
-	setColoredVertex(&c.edgeVertices[1], to[0]+offsetX, to[1]+offsetY, clr)
-	setColoredVertex(&c.edgeVertices[2], from[0]-offsetX, from[1]-offsetY, clr)
-	setColoredVertex(&c.edgeVertices[3], to[0]-offsetX, to[1]-offsetY, clr)
-	screen.DrawTriangles(c.edgeVertices[:], cubeFaceIndices[:], fillImage, nil)
-}
-
-// Draw draws the 3D cube at the specified position.
-func (c *Cube3D) Draw(screen, fillImage *ebiten.Image, centerX, centerY float64) {
-	c.updateGeometry(centerX, centerY)
-
-	for _, faceDepth := range c.depths[:c.visibleFaces] {
-		face := cubeFaces[faceDepth.index]
-		faceColor := cubeFaceColors[faceDepth.index]
-
-		for i, vertexIndex := range face {
-			point := c.projected[vertexIndex]
-			setColoredVertex(&c.faceVertices[i], point[0], point[1], faceColor)
-		}
-		screen.DrawTriangles(c.faceVertices[:], cubeFaceIndices[:], fillImage, nil)
-
-		// Draw edges with darker color for better visibility
-		edgeColor := color.RGBA{
-			R: faceColor.R * 3 / 4,
-			G: faceColor.G * 3 / 4,
-			B: faceColor.B * 3 / 4,
-			A: 255,
-		}
-		for i := 0; i < 4; i++ {
-			j := (i + 1) % 4
-			from := c.projected[face[i]]
-			to := c.projected[face[j]]
-			c.drawEdge(screen, fillImage, from, to, edgeColor)
-		}
-	}
-}
 
 // CRT Shader
 const crtShaderSrc = `
@@ -372,7 +174,7 @@ type Game struct {
 	introScrollSource *ebiten.Image
 
 	// Font data
-	letterData map[rune]Letter
+	fontAtlas *scrolling.Atlas
 
 	// CRT Shader
 	crtShader *ebiten.Shader
@@ -384,9 +186,9 @@ type Game struct {
 	copperSin []int
 
 	// 3D Cubes
-	cubes         [nbCubes]Cube3D
-	spritePos     [nbCubes]float64
-	cubeFillImage *ebiten.Image
+	cubes     [nbCubes]*effects.SolidCube
+	spritePos [nbCubes]float64
+	cubeBatch *effects.SolidCubeBatch
 
 	// DMA logo sprites (16 logos in 4x4 grid)
 	dmaSprites [nbDMALogos]DMASprite
@@ -433,7 +235,6 @@ func NewGame() *Game {
 		introLetter:     -1,
 		introTile:       -1,
 		introSpeed:      8,
-		letterData:      make(map[rune]Letter),
 		speedMultiplier: 1.0,
 		displayedLetter: -1,
 		logicalWidth:    screenWidth,
@@ -463,8 +264,7 @@ func NewGame() *Game {
 		&ebiten.NewImageOptions{Unmanaged: true},
 	)
 	g.titleCanvas = ebiten.NewImage(screenWidth, 72)
-	g.cubeFillImage = ebiten.NewImage(3, 3)
-	g.cubeFillImage.Fill(color.White)
+	g.cubeBatch = effects.NewSolidCubeBatch(nbCubes)
 	g.initScrollMesh()
 
 	for i := range g.rotoVertices {
@@ -484,13 +284,15 @@ func NewGame() *Game {
 
 	// Init 3D cubes
 	for i := 0; i < nbCubes; i++ {
-		g.cubes[i].size = 40
+		var err error
+		g.cubes[i], err = effects.NewSolidCube(presets.CocoCube(40))
+		if err != nil {
+			panic(err)
+		}
 		// Set initial position offset for each cube
 		g.spritePos[i] = float64(0.15) * float64(i+1)
 		// Set different initial rotations
-		g.cubes[i].angleX = float64(i) * 0.3
-		g.cubes[i].angleY = float64(i) * 0.2
-		g.cubes[i].angleZ = float64(i) * 0.1
+		g.cubes[i].Rotation = geometry.Vec3{X: float64(i) * .3, Y: float64(i) * .2, Z: float64(i) * .1}
 	}
 
 	// Init wave curves for scrolling
@@ -577,39 +379,10 @@ func (g *Game) initAudio() {
 }
 
 func (g *Game) initFontData() {
-	data := []struct {
-		char  rune
-		x, y  int
-		width int
-	}{
-		{' ', 0, 0, 32}, {'!', 48, 0, 16}, {'"', 96, 0, 32},
-		{'\'', 336, 0, 16}, {'(', 384, 0, 32}, {')', 432, 0, 32},
-		{'+', 48, 36, 48}, {',', 96, 36, 16}, {'-', 144, 36, 32},
-		{'.', 192, 36, 16}, {'0', 288, 36, 48}, {'1', 336, 36, 48},
-		{'2', 384, 36, 48}, {'3', 432, 36, 48}, {'4', 0, 72, 48},
-		{'5', 48, 72, 48}, {'6', 96, 72, 48}, {'7', 144, 72, 48},
-		{'8', 192, 72, 48}, {'9', 240, 72, 48}, {':', 288, 72, 16},
-		{';', 336, 72, 16}, {'<', 384, 72, 32}, {'=', 432, 72, 32},
-		{'>', 0, 108, 32}, {'?', 48, 108, 48}, {'A', 144, 108, 48},
-		{'B', 192, 108, 48}, {'C', 240, 108, 48}, {'D', 288, 108, 48},
-		{'E', 336, 108, 48}, {'F', 384, 108, 48}, {'G', 432, 108, 48},
-		{'H', 0, 144, 48}, {'I', 48, 144, 16}, {'J', 96, 144, 48},
-		{'K', 144, 144, 48}, {'L', 192, 144, 48}, {'M', 240, 144, 48},
-		{'N', 288, 144, 48}, {'O', 336, 144, 48}, {'P', 384, 144, 48},
-		{'Q', 432, 144, 48}, {'R', 0, 180, 48}, {'S', 48, 180, 48},
-		{'T', 96, 180, 48}, {'U', 144, 180, 48}, {'V', 192, 180, 48},
-		{'W', 240, 180, 48}, {'X', 288, 180, 48}, {'Y', 336, 180, 48},
-		{'Z', 384, 180, 48},
-	}
-
-	for _, d := range data {
-		letter := Letter{x: d.x, y: d.y, width: d.width}
-		if g.fontImg != nil {
-			letter.glyph = g.fontImg.SubImage(
-				image.Rect(d.x, d.y, d.x+d.width, d.y+fontHeight),
-			).(*ebiten.Image)
-		}
-		g.letterData[d.char] = letter
+	var err error
+	g.fontAtlas, err = presets.FontAtlas("go-cocoisthebest", g.fontImg)
+	if err != nil {
+		panic(err)
 	}
 }
 
@@ -637,8 +410,8 @@ func (g *Game) precalcPosition() {
 	g.position = []int{}
 
 	for _, r := range g.scrollTextRunes {
-		if letter, ok := g.letterData[r]; ok {
-			count += int(float64(letter.width) * 3.0)
+		if _, letter, ok := g.fontAtlas.ExactGlyph(r); ok {
+			count += int(float64(int(letter.Advance)) * 3.0)
 			g.position = append(g.position, count)
 		}
 	}
@@ -760,8 +533,8 @@ func (g *Game) updateIntro() {
 	if g.introX < 0 {
 		if g.introTile > -1 {
 			char := g.getIntroLetter(g.introTile)
-			if letter, ok := g.letterData[char]; ok {
-				g.introX += int(float64(letter.width) * 2.0)
+			if _, letter, ok := g.fontAtlas.ExactGlyph(char); ok {
+				g.introX += int(float64(int(letter.Advance)) * 2.0)
 			}
 		}
 		g.introLetter++
@@ -787,11 +560,11 @@ func (g *Game) updateIntro() {
 
 	// Draw new letter
 	char := g.getIntroLetter(g.introTile)
-	if letter, ok := g.letterData[char]; ok {
+	if glyphImage, _, ok := g.fontAtlas.ExactGlyph(char); ok {
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Scale(2.0, 2.0)
 		op.GeoM.Translate(float64(screenWidth+g.introX), 0)
-		g.surfScroll1.DrawImage(letter.glyph, op)
+		g.surfScroll1.DrawImage(glyphImage, op)
 	}
 }
 
@@ -1002,8 +775,8 @@ func (g *Game) displayText(letterOffset int) {
 	if g.scrollRenderer == nil {
 		glyphs := make([]scrolling.Glyph, len(g.scrollTextRunes))
 		for i, r := range g.scrollTextRunes {
-			if letter, ok := g.letterData[r]; ok {
-				glyphs[i] = scrolling.Glyph{Image: letter.glyph, Advance: float64(letter.width)}
+			if glyphImage, letter, ok := g.fontAtlas.ExactGlyph(r); ok {
+				glyphs[i] = scrolling.Glyph{Image: glyphImage, Advance: float64(int(letter.Advance))}
 			} else {
 				glyphs[i] = scrolling.Glyph{Advance: 32}
 			}
@@ -1022,6 +795,7 @@ func (g *Game) displayText(letterOffset int) {
 }
 
 func (g *Game) draw3DCubes(dst *ebiten.Image) {
+	g.cubeBatch.Reset()
 	// Draw each cube at its position
 	for i := 0; i < nbCubes; i++ {
 		// Calculate position
@@ -1029,8 +803,9 @@ func (g *Game) draw3DCubes(dst *ebiten.Image) {
 		yPos := float64(screenHeight)/2 + (84 * math.Cos(g.spritePos[i]*2.5)) // Centered vertically
 
 		// Draw the 3D cube
-		g.cubes[i].Draw(dst, g.cubeFillImage, xPos, yPos)
+		g.cubeBatch.Add(g.cubes[i], xPos, yPos)
 	}
+	g.cubeBatch.Draw(dst)
 }
 
 func (g *Game) drawTitleWithCopperbars(dst *ebiten.Image) {

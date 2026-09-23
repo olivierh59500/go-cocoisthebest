@@ -121,15 +121,15 @@ func (g *Game) drawControlLabel(screen *ebiten.Image, label string, bounds image
 	const scale = 0.6
 	width := 0.0
 	for _, char := range label {
-		if letter, ok := g.letterData[char]; ok {
-			width += float64(letter.width) * scale
+		if _, letter, ok := g.fontAtlas.ExactGlyph(char); ok {
+			width += float64(int(letter.Advance)) * scale
 		}
 	}
 
 	x := float64(bounds.Min.X) + (float64(bounds.Dx())-width)/2
 	y := float64(bounds.Min.Y) + (float64(bounds.Dy())-fontHeight*scale)/2
 	for _, char := range label {
-		letter, ok := g.letterData[char]
+		glyphImage, letter, ok := g.fontAtlas.ExactGlyph(char)
 		if !ok {
 			continue
 		}
@@ -137,7 +137,7 @@ func (g *Game) drawControlLabel(screen *ebiten.Image, label string, bounds image
 		op.GeoM.Scale(scale, scale)
 		op.GeoM.Translate(x, y)
 		op.ColorScale.Scale(1, 0.75, 0.35, 1)
-		screen.DrawImage(letter.glyph, op)
-		x += float64(letter.width) * scale
+		screen.DrawImage(glyphImage, op)
+		x += float64(int(letter.Advance)) * scale
 	}
 }

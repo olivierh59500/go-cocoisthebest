@@ -5,6 +5,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/olivierh59500/democonstructionkit/effects"
+	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/sound"
 )
 
@@ -97,15 +99,19 @@ func TestScrollMeshTopology(t *testing.T) {
 }
 
 func TestCubeBackFaceCulling(t *testing.T) {
-	cube := NewCube3D(40)
-	cube.updateGeometry(400, 300)
-	if got, want := cube.visibleFaces, 1; got != want {
+	cube, err := effects.NewSolidCube(presets.CocoCube(40))
+	if err != nil {
+		panic(err)
+	}
+	defer cube.Close()
+	vertices, _ := cube.Geometry(400, 300)
+	if got, want := len(vertices)/20, 1; got != want {
 		t.Fatalf("axis-aligned visible faces = %d, want %d", got, want)
 	}
 
 	cube.Rotate(0.4, 0.6, 0.2)
-	cube.updateGeometry(400, 300)
-	if got, want := cube.visibleFaces, 3; got != want {
+	vertices, _ = cube.Geometry(400, 300)
+	if got, want := len(vertices)/20, 3; got != want {
 		t.Fatalf("rotated visible faces = %d, want %d", got, want)
 	}
 }
@@ -136,6 +142,14 @@ func TestControlLayoutUsesOnlySideAreas(t *testing.T) {
 
 func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 	game := &Game{speedMultiplier: 2}
+	for i := range game.cubes {
+		var err error
+		game.cubes[i], err = effects.NewSolidCube(presets.CocoCube(40))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer game.cubes[i].Close()
+	}
 	game.updateDemo()
 
 	checks := map[string]struct {
@@ -150,7 +164,7 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		"rotozoom angle": {got: game.posRi, want: 0.01},
 		"title phase":    {got: game.logoX, want: 0.025},
 		"cube position":  {got: game.spritePos[0], want: 0.08},
-		"cube rotation":  {got: game.cubes[0].angleX, want: 0.04},
+		"cube rotation":  {got: game.cubes[0].Rotation.X, want: 0.04},
 	}
 	for name, check := range checks {
 		if math.Abs(check.got-check.want) > 1e-12 {
@@ -186,7 +200,6 @@ func TestScrollLetterWrapsAcrossMultipleMessageLoops(t *testing.T) {
 
 func TestScrollerFollowsRealWaveAcrossThreeFullMessages(t *testing.T) {
 	game := &Game{
-		letterData:      make(map[rune]Letter),
 		scrollTextRunes: []rune(demoScrollText),
 	}
 	game.initFontData()
@@ -228,12 +241,16 @@ func BenchmarkMusicStreamRead(b *testing.B) {
 }
 
 func BenchmarkCubeGeometry(b *testing.B) {
-	cube := NewCube3D(40)
+	cube, err := effects.NewSolidCube(presets.CocoCube(40))
+	if err != nil {
+		panic(err)
+	}
+	defer cube.Close()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
 		cube.Rotate(0.02, 0.03, 0.01)
-		cube.updateGeometry(400, 300)
+		cube.Geometry(400, 300)
 	}
 }
