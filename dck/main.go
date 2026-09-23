@@ -12,6 +12,7 @@ import (
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
+	"github.com/olivierh59500/democonstructionkit/sprites"
 	originalassets "github.com/olivierh59500/go-cocoisthebest"
 
 	_ "image/png"
@@ -135,9 +136,8 @@ type Game struct {
 	spritePos [nbCubes]float64
 	cubeBatch *effects.SolidCubeBatch
 
-	// DMA logo sprites (16 logos in 4x4 grid)
-	dmaSprites [nbDMALogos]DMASprite
-	ctrSprite  float64
+	// Shared image formation for the sixteen synchronized logos.
+	logoFormation *sprites.Group
 
 	// Rotozoom
 	posXi        float64
@@ -157,10 +157,6 @@ type Game struct {
 	controlPressed [controlCount]bool
 }
 
-type DMASprite struct {
-	x, y float64
-}
-
 func NewGame() *Game {
 	g := &Game{
 		state:           gameStateIntro,
@@ -170,8 +166,13 @@ func NewGame() *Game {
 		hold:            0,   // Start immediately
 	}
 
-	// Load images
+	// Load images and construct the complete shared sprite formation.
 	g.loadImages()
+	var err error
+	g.logoFormation, err = sprites.NewGroup(presets.CocoLogoFormation(g.dmaLogoImg, screenWidth, screenHeight))
+	if err != nil {
+		panic(err)
+	}
 
 	// Create canvases
 	g.introStrip = ebiten.NewImage(screenWidth, int(fontHeight*2))
@@ -211,7 +212,6 @@ func NewGame() *Game {
 	}
 
 	// Bind the same complete text transports used by other productions.
-	var err error
 	intro := presets.CocoIntroFeed(g.fontAtlas, introScrollText)
 	g.introScroll, err = scrolling.New(scrolling.Config{Feed: &intro})
 	if err != nil {
@@ -335,7 +335,9 @@ func (g *Game) Update() error {
 	if g.state == gameStateIntro {
 		return g.updateIntro()
 	}
-	g.updateDemo()
+	if err := g.updateDemo(); err != nil {
+		return err
+	}
 	return g.mainScroll.Update(kit.Frame{Time: g.demoTime})
 }
 
@@ -353,7 +355,7 @@ func (g *Game) updateIntro() error {
 	return nil
 }
 
-func (g *Game) updateDemo() {
+func (g *Game) updateDemo() error {
 	speed := g.speedMultiplier
 	g.demoTime += speed
 
@@ -377,29 +379,9 @@ func (g *Game) updateDemo() {
 		)
 	}
 
-	// Update DMA logo sprites - synchronized movement (all move together)
-	g.ctrSprite += 0.02 * speed
-
-	// Base movement for all sprites (synchronized)
-	baseX := 100*math.Sin(g.ctrSprite*1.35+1.25) + 100*math.Sin(g.ctrSprite*1.86+0.54)
-	baseY := 60*math.Cos(g.ctrSprite*1.72+0.23) + 60*math.Cos(g.ctrSprite*1.63+0.98)
-
-	for i := 0; i < nbDMALogos; i++ {
-		// 4x4 grid pattern
-		row := i / 4
-		col := i % 4
-
-		// Base position centered on screen, avoiding top banner (72px height)
-		centerX := float64(screenWidth) / 2
-		centerY := 72 + float64(screenHeight-72)/2 // Below banner, centered in remaining space
-
-		// Grid offsets - spread to occupy the screen (4x4 grid)
-		offsetX := (float64(col) - 1.5) * 200 // Centered with 4 columns
-		offsetY := (float64(row) - 1.5) * 140 // Centered with 4 rows
-
-		// Apply synchronized movement
-		g.dmaSprites[i].x = centerX + offsetX + baseX
-		g.dmaSprites[i].y = centerY + offsetY + baseY
+	// The group owns the common harmonics, grid positions and sprite poses.
+	if err := g.logoFormation.Advance(.02 * speed); err != nil {
+		return err
 	}
 
 	// Update rotozoom
@@ -414,6 +396,7 @@ func (g *Game) updateDemo() {
 	if g.hold <= 0 {
 		g.logoX += 0.0125 * speed // Moves from right to left and back
 	}
+	return nil
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
@@ -455,7 +438,7 @@ func (g *Game) drawDemo() {
 	g.mainScroll.Draw(g.mainCanvas)
 
 	// 3. DMA logo sprites (9 logos grid)
-	g.drawDMALogos(g.mainCanvas)
+	g.logoFormation.Draw(g.mainCanvas)
 
 	// 4. 3D cubes (on top of logos)
 	g.draw3DCubes(g.mainCanvas)
@@ -493,25 +476,6 @@ func (g *Game) drawRotozoom(dst *ebiten.Image) {
 
 	op := &ebiten.DrawTrianglesOptions{Address: ebiten.AddressRepeat}
 	dst.DrawTriangles(g.rotoVertices[:], []uint16{0, 1, 2, 1, 2, 3}, g.cocoImg, op)
-}
-
-func (g *Game) drawDMALogos(dst *ebiten.Image) {
-	if g.dmaLogoImg == nil {
-		return
-	}
-
-	logoW := float64(g.dmaLogoImg.Bounds().Dx())
-	logoH := float64(g.dmaLogoImg.Bounds().Dy())
-	scale := 0.5 // Larger logos (increased from 0.35)
-
-	for _, sprite := range g.dmaSprites {
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(-logoW/2, -logoH/2)
-		op.GeoM.Scale(scale, scale)
-		op.GeoM.Translate(sprite.x, sprite.y)
-		op.ColorScale.Scale(1, 1, 1, 0.6) // Semi-transparent
-		dst.DrawImage(g.dmaLogoImg, op)
-	}
 }
 
 func (g *Game) draw3DCubes(dst *ebiten.Image) {

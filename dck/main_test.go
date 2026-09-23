@@ -8,6 +8,7 @@ import (
 	"github.com/olivierh59500/democonstructionkit/effects"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/sound"
+	"github.com/olivierh59500/democonstructionkit/sprites"
 )
 
 func TestLayout(t *testing.T) {
@@ -132,7 +133,14 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		}
 		defer game.cubes[i].Close()
 	}
-	game.updateDemo()
+	var err error
+	game.logoFormation, err = sprites.NewGroup(presets.CocoLogoFormation(nil, screenWidth, screenHeight))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := game.updateDemo(); err != nil {
+		t.Fatal(err)
+	}
 
 	checks := map[string]struct {
 		got, want float64
@@ -140,7 +148,7 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		"demo time":      {got: game.demoTime, want: 2},
 		"copper forward": {got: game.cnt, want: 6},
 		"copper reverse": {got: game.cnt2, want: 1014},
-		"sprite phase":   {got: game.ctrSprite, want: 0.04},
+		"sprite phase":   {got: game.logoFormation.Phase(), want: 0.04},
 		"rotozoom x":     {got: game.posXi, want: 0.016},
 		"rotozoom z":     {got: game.posZi, want: 0.006},
 		"rotozoom angle": {got: game.posRi, want: 0.01},
