@@ -65,7 +65,7 @@ func (g *Game) updateControls() {
 		}
 	}
 
-	if g.ymPlayer != nil {
+	if g.musicStream != nil {
 		volumeDelta := 0.0
 		if ebiten.IsKeyPressed(ebiten.KeyUp) || pressed[controlVolumeUp] {
 			volumeDelta += 0.01
@@ -74,7 +74,7 @@ func (g *Game) updateControls() {
 			volumeDelta -= 0.01
 		}
 		if volumeDelta != 0 {
-			g.ymPlayer.SetVolume(g.ymPlayer.GetVolume() + volumeDelta)
+			g.musicStream.SetVolume(g.musicStream.Volume() + volumeDelta)
 		}
 	}
 

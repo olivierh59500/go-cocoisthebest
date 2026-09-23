@@ -4,6 +4,8 @@ import (
 	"io"
 	"math"
 	"testing"
+
+	"github.com/olivierh59500/democonstructionkit/sound"
 )
 
 func TestLayout(t *testing.T) {
@@ -31,45 +33,47 @@ func TestLayout(t *testing.T) {
 	}
 }
 
-func TestYMPlayerSeekUsesPCMByteOffsets(t *testing.T) {
-	player, err := NewYMPlayer(musicData, sampleRate, true)
+func TestMusicStreamSeekUsesPCMByteOffsets(t *testing.T) {
+	player, err := sound.Open("music.ym", musicData, sound.Options{SampleRate: sampleRate, Loop: true, PCMFormat: sound.PCM16, Gain: 0.7})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := player.Close(); err != nil {
-			t.Errorf("Close() failed: %v", err)
+	defer player.Close()
+	// Preserve the exact byte position, including the middle of a stereo frame.
+	const tail = 97
+	target := int64(sampleRate*4 + 3)
+	sequential := make([]byte, target+tail)
+	if _, err := io.ReadFull(player, sequential); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := player.Seek(target, io.SeekStart); err != nil || got != target {
+		t.Fatalf("Seek = %d, %v", got, err)
+	}
+	after := make([]byte, tail)
+	if _, err := io.ReadFull(player, after); err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range after {
+		if v != sequential[int(target)+i] {
+			t.Fatalf("seek did not reproduce PCM at byte %d", i)
 		}
-	})
-
-	oneSecond := int64(sampleRate * 4)
-	got, err := player.Seek(oneSecond, io.SeekStart)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != oneSecond {
-		t.Fatalf("Seek(one second) = %d, want %d", got, oneSecond)
-	}
-
-	got, err = player.Seek(0, io.SeekEnd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != player.totalBytes {
-		t.Fatalf("Seek(end) = %d, want %d", got, player.totalBytes)
 	}
 }
 
-func TestYMPlayerVolumeIsClamped(t *testing.T) {
-	player := &YMPlayer{}
+func TestMusicStreamVolumeIsClamped(t *testing.T) {
+	player, err := sound.Open("music.ym", musicData, sound.Options{SampleRate: sampleRate, Loop: true, PCMFormat: sound.PCM16, Gain: 0.7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer player.Close()
 
 	player.SetVolume(-1)
-	if got := player.GetVolume(); got != 0 {
+	if got := player.Volume(); got != 0 {
 		t.Fatalf("volume below range = %v, want 0", got)
 	}
 
 	player.SetVolume(2)
-	if got := player.GetVolume(); got != 1 {
+	if got := player.Volume(); got != 1 {
 		t.Fatalf("volume above range = %v, want 1", got)
 	}
 }
@@ -203,8 +207,8 @@ func TestScrollerFollowsRealWaveAcrossThreeFullMessages(t *testing.T) {
 	}
 }
 
-func BenchmarkYMPlayerRead(b *testing.B) {
-	player, err := NewYMPlayer(musicData, sampleRate, true)
+func BenchmarkMusicStreamRead(b *testing.B) {
+	player, err := sound.Open("music.ym", musicData, sound.Options{SampleRate: sampleRate, Loop: true, PCMFormat: sound.PCM16, Gain: 0.7})
 	if err != nil {
 		b.Fatal(err)
 	}
