@@ -80,24 +80,6 @@ func TestMusicStreamVolumeIsClamped(t *testing.T) {
 	}
 }
 
-func TestScrollMeshTopology(t *testing.T) {
-	game := &Game{}
-	game.initScrollMesh()
-
-	const lineCount = screenHeight - 72
-	if got, want := len(game.scrollVertices), lineCount*4; got != want {
-		t.Fatalf("vertex count = %d, want %d", got, want)
-	}
-	if got, want := len(game.scrollIndices), lineCount*6; got != want {
-		t.Fatalf("index count = %d, want %d", got, want)
-	}
-	for _, index := range game.scrollIndices {
-		if int(index) >= len(game.scrollVertices) {
-			t.Fatalf("index %d exceeds vertex count %d", index, len(game.scrollVertices))
-		}
-	}
-}
-
 func TestCubeBackFaceCulling(t *testing.T) {
 	cube, err := effects.NewSolidCube(presets.CocoCube(40))
 	if err != nil {
@@ -170,53 +152,6 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		if math.Abs(check.got-check.want) > 1e-12 {
 			t.Errorf("%s = %v, want %v", name, check.got, check.want)
 		}
-	}
-}
-
-func TestScrollLetterWrapsAcrossMultipleMessageLoops(t *testing.T) {
-	game := &Game{
-		position:        []int{10, 20, 30},
-		scrollTextRunes: []rune("ABC"),
-	}
-
-	if got, want := game.getPosition(4), 40; got != want {
-		t.Fatalf("position after wrap = %d, want %d", got, want)
-	}
-
-	game.advanceScrollLetter(95)
-	if got, want := game.letterNum, 9; got != want {
-		t.Fatalf("letter after three loops = %d, want %d", got, want)
-	}
-	if got, want := game.getLetter(game.letterNum), 'A'; got != want {
-		t.Fatalf("wrapped letter = %q, want %q", got, want)
-	}
-
-	// Some curve sections move backwards; the active letter must follow them.
-	game.advanceScrollLetter(5)
-	if got, want := game.letterNum, 0; got != want {
-		t.Fatalf("letter after backwards movement = %d, want %d", got, want)
-	}
-}
-
-func TestScrollerFollowsRealWaveAcrossThreeFullMessages(t *testing.T) {
-	game := &Game{
-		scrollTextRunes: []rune(demoScrollText),
-	}
-	game.initFontData()
-	game.createCurves()
-	game.precalcPosition()
-	game.precalcMainWave()
-
-	targetLetter := len(game.scrollTextRunes) * 3
-	for frontWavePos := 0; frontWavePos < 100_000_000 && game.letterNum < targetLetter; frontWavePos += 600 {
-		decalX := game.scrollOffset(frontWavePos)
-		game.advanceScrollLetter(decalX)
-		if start, end := game.getPosition(game.letterNum), game.getPosition(game.letterNum+1); decalX < start || decalX >= end {
-			t.Fatalf("offset %d is outside active letter %d interval [%d, %d)", decalX, game.letterNum, start, end)
-		}
-	}
-	if game.letterNum < targetLetter {
-		t.Fatalf("scroller reached only letter %d, want at least %d", game.letterNum, targetLetter)
 	}
 }
 

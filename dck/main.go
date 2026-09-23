@@ -6,7 +6,7 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/olivierh59500/democonstructionkit/composite"
+	kit "github.com/olivierh59500/democonstructionkit"
 	"github.com/olivierh59500/democonstructionkit/effects"
 	"github.com/olivierh59500/democonstructionkit/geometry"
 	"github.com/olivierh59500/democonstructionkit/presets"
@@ -92,53 +92,9 @@ const (
 	gameStateDemo
 )
 
-// CRT Shader
-const crtShaderSrc = `
-package main
-
-func Fragment(position vec4, texCoord vec2, color vec4) vec4 {
-	var uv vec2
-	uv = texCoord
-
-	// Barrel distortion
-	var dc vec2
-	dc = uv - 0.5
-	dc = dc * (1.0 + dot(dc, dc) * 0.15)
-	uv = dc + 0.5
-
-	if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 {
-		return vec4(0.0, 0.0, 0.0, 1.0)
-	}
-
-	var col vec4
-	col = imageSrc0At(uv)
-
-	// Scanlines
-	var scanline float
-	scanline = sin(uv.y * 800.0) * 0.04
-	col.rgb = col.rgb - scanline
-
-	// RGB shift
-	var rShift float
-	var bShift float
-	rShift = imageSrc0At(uv + vec2(0.002, 0.0)).r
-	bShift = imageSrc0At(uv - vec2(0.002, 0.0)).b
-	col.r = rShift
-	col.b = bShift
-
-	// Vignette
-	var vignette float
-	vignette = 1.0 - dot(dc, dc) * 0.5
-	col.rgb = col.rgb * vignette
-
-	return col * color
-}
-`
-
 // Game state
 type Game struct {
-	scrollRenderer *scrolling.Scrolling
-	stripBatch     *composite.QuadBatch
+	introScroll, mainScroll *scrolling.Scrolling
 	// Images
 	titleImg   *ebiten.Image
 	barsImg    *ebiten.Image
@@ -150,7 +106,6 @@ type Game struct {
 	// Canvases
 	introStrip  *ebiten.Image
 	mainCanvas  *ebiten.Image
-	scrollSurf  *ebiten.Image
 	titleCanvas *ebiten.Image
 
 	// Audio
@@ -163,21 +118,11 @@ type Game struct {
 	state    gameState
 	demoTime float64
 
-	// Intro scrolling
-	introX            int
-	introLetter       int
-	introTile         int
-	introSpeed        int
-	introTextRunes    []rune
-	surfScroll1       *ebiten.Image
-	surfScroll2       *ebiten.Image
-	introScrollSource *ebiten.Image
-
 	// Font data
 	fontAtlas *scrolling.Atlas
 
 	// CRT Shader
-	crtShader *ebiten.Shader
+	crt *effects.CRTOverlay
 
 	// Demo effects
 	// Copper bars
@@ -193,18 +138,6 @@ type Game struct {
 	// DMA logo sprites (16 logos in 4x4 grid)
 	dmaSprites [nbDMALogos]DMASprite
 	ctrSprite  float64
-
-	// Scrolling text (megatwist style)
-	frontWavePos    int
-	letterNum       int
-	letterDecal     int
-	curves          [8][]int
-	frontMainWave   []int
-	position        []int
-	scrollTextRunes []rune
-	displayedLetter int
-	scrollVertices  []ebiten.Vertex
-	scrollIndices   []uint16
 
 	// Rotozoom
 	posXi        float64
@@ -231,19 +164,11 @@ type DMASprite struct {
 func NewGame() *Game {
 	g := &Game{
 		state:           gameStateIntro,
-		introX:          -1,
-		introLetter:     -1,
-		introTile:       -1,
-		introSpeed:      8,
 		speedMultiplier: 1.0,
-		displayedLetter: -1,
 		logicalWidth:    screenWidth,
 		logoX:           0.5, // Center the logo (0.5 = centered)
 		hold:            0,   // Start immediately
 	}
-
-	g.introTextRunes = []rune(introScrollText)
-	g.scrollTextRunes = []rune(demoScrollText)
 
 	// Load images
 	g.loadImages()
@@ -254,18 +179,8 @@ func NewGame() *Game {
 		image.Rect(0, 0, screenWidth, screenHeight),
 		&ebiten.NewImageOptions{Unmanaged: true},
 	)
-	g.surfScroll1 = ebiten.NewImage(screenWidth+96, int(fontHeight*2))
-	g.surfScroll2 = ebiten.NewImage(screenWidth+96, int(fontHeight*2))
-	g.introScrollSource = g.surfScroll1.SubImage(
-		image.Rect(g.introSpeed, 0, g.surfScroll1.Bounds().Dx(), int(fontHeight*2)),
-	).(*ebiten.Image)
-	g.scrollSurf = ebiten.NewImageWithOptions(
-		image.Rect(0, 0, screenWidth*2, fontHeight*3),
-		&ebiten.NewImageOptions{Unmanaged: true},
-	)
 	g.titleCanvas = ebiten.NewImage(screenWidth, 72)
 	g.cubeBatch = effects.NewSolidCubeBatch(nbCubes)
-	g.initScrollMesh()
 
 	for i := range g.rotoVertices {
 		g.rotoVertices[i].ColorR = 0.5
@@ -295,17 +210,27 @@ func NewGame() *Game {
 		g.cubes[i].Rotation = geometry.Vec3{X: float64(i) * .3, Y: float64(i) * .2, Z: float64(i) * .1}
 	}
 
-	// Init wave curves for scrolling
-	g.createCurves()
-	g.precalcPosition()
-	g.precalcMainWave()
+	// Bind the same complete text transports used by other productions.
+	var err error
+	intro := presets.CocoIntroFeed(g.fontAtlas, introScrollText)
+	g.introScroll, err = scrolling.New(scrolling.Config{Feed: &intro})
+	if err != nil {
+		panic(err)
+	}
+	main, err := presets.CocoScanlineScroll(g.fontAtlas, demoScrollText)
+	if err != nil {
+		panic(err)
+	}
+	g.mainScroll, err = scrolling.New(scrolling.Config{Scanline: &main})
+	if err != nil {
+		panic(err)
+	}
 
 	// Init copper bars sine table
 	g.initCopperSin()
 
 	// Compile CRT shader
-	var err error
-	g.crtShader, err = ebiten.NewShader([]byte(crtShaderSrc))
+	g.crt, err = effects.NewCRTOverlay(presets.DMACRTOverlay())
 	if err != nil {
 		log.Printf("Failed to compile CRT shader: %v", err)
 	}
@@ -397,119 +322,6 @@ func (g *Game) initBarStrips() {
 	}
 }
 
-func (g *Game) createCurves() {
-	curves, err := presets.RibbonCurves(1)
-	if err != nil {
-		panic(err)
-	}
-	copy(g.curves[:], curves[:8])
-}
-
-func (g *Game) precalcPosition() {
-	count := 0
-	g.position = []int{}
-
-	for _, r := range g.scrollTextRunes {
-		if _, letter, ok := g.fontAtlas.ExactGlyph(r); ok {
-			count += int(float64(int(letter.Advance)) * 3.0)
-			g.position = append(g.position, count)
-		}
-	}
-}
-
-func (g *Game) precalcMainWave() {
-	frontMainWaveTable := []int{
-		cdSlowSin, cdSlowSin, cdSlowDist, cdSlowSin,
-		cdSlowSin, cdMedSin, cdFastSin, cdMedSin,
-		cdSlowSin, cdMedDist, cdMedSin, cdSlowSin,
-		cdSplitted,
-	}
-
-	var err error
-	g.frontMainWave, err = composite.JoinDeltaCurves(g.curves[:], frontMainWaveTable)
-	if err != nil {
-		panic(err)
-	}
-}
-
-func (g *Game) initScrollMesh() {
-	const lineCount = screenHeight - 72
-	g.scrollVertices = make([]ebiten.Vertex, lineCount*4)
-	g.scrollIndices = make([]uint16, lineCount*6)
-
-	for line := 0; line < lineCount; line++ {
-		vertexBase := line * 4
-		for i := 0; i < 4; i++ {
-			vertex := &g.scrollVertices[vertexBase+i]
-			vertex.ColorR = 1
-			vertex.ColorG = 1
-			vertex.ColorB = 1
-			vertex.ColorA = 1
-		}
-
-		indexBase := line * 6
-		base := uint16(vertexBase)
-		g.scrollIndices[indexBase] = base
-		g.scrollIndices[indexBase+1] = base + 1
-		g.scrollIndices[indexBase+2] = base + 2
-		g.scrollIndices[indexBase+3] = base + 1
-		g.scrollIndices[indexBase+4] = base + 2
-		g.scrollIndices[indexBase+5] = base + 3
-	}
-}
-
-func (g *Game) getSum(arr []int, index, decal int) int {
-	return composite.CumulativeAt(arr, index, decal)
-}
-
-func (g *Game) getWave(i int) int {
-	return g.getSum(g.frontMainWave, i, 0)
-}
-
-func (g *Game) getPosition(i int) int {
-	if i > 0 {
-		return g.getSum(g.position, i-1, 0)
-	}
-	return 0
-}
-
-func (g *Game) advanceScrollLetter(decalX int) {
-	if len(g.position) == 0 {
-		g.letterNum = 0
-		g.letterDecal = 0
-		return
-	}
-	for g.letterNum > 0 && decalX < g.getPosition(g.letterNum) {
-		g.letterNum--
-	}
-	for g.getPosition(g.letterNum+1) <= decalX {
-		g.letterNum++
-	}
-	g.letterDecal = g.getPosition(g.letterNum)
-}
-
-func (g *Game) scrollOffset(frontWavePos int) int {
-	decalX := g.getWave(frontWavePos)
-	for line := 1; line < fontHeight; line++ {
-		decalX = min(decalX, g.getWave(frontWavePos+line))
-	}
-	return max(decalX, 0)
-}
-
-func (g *Game) getLetter(pos int) rune {
-	if len(g.scrollTextRunes) == 0 {
-		return ' '
-	}
-	return g.scrollTextRunes[pos%len(g.scrollTextRunes)]
-}
-
-func (g *Game) getIntroLetter(pos int) rune {
-	if len(g.introTextRunes) == 0 {
-		return ' '
-	}
-	return g.introTextRunes[pos%len(g.introTextRunes)]
-}
-
 func (g *Game) Update() error {
 	// On Android, NewGame runs while the native library is loaded. Opening the
 	// audio device there can block before the Activity has installed its view.
@@ -521,51 +333,24 @@ func (g *Game) Update() error {
 	g.updateControls()
 
 	if g.state == gameStateIntro {
-		g.updateIntro()
-	} else {
-		g.updateDemo()
+		return g.updateIntro()
 	}
-
-	return nil
+	g.updateDemo()
+	return g.mainScroll.Update(kit.Frame{Time: g.demoTime})
 }
 
-func (g *Game) updateIntro() {
-	if g.introX < 0 {
-		if g.introTile > -1 {
-			char := g.getIntroLetter(g.introTile)
-			if _, letter, ok := g.fontAtlas.ExactGlyph(char); ok {
-				g.introX += int(float64(int(letter.Advance)) * 2.0)
-			}
-		}
-		g.introLetter++
-		if g.introLetter >= len(g.introTextRunes) {
-			g.state = gameStateDemo
-			g.demoTime = 0
-			// Start music
-			if g.audioPlayer != nil && !g.audioPlayer.IsPlaying() {
-				g.audioPlayer.Play()
-			}
-			return
-		}
-		g.introTile = g.introLetter
+func (g *Game) updateIntro() error {
+	if err := g.introScroll.Update(kit.Frame{}); err != nil {
+		return err
 	}
-	g.introX -= g.introSpeed
-
-	// Scroll
-	g.surfScroll2.Clear()
-	g.surfScroll2.DrawImage(g.introScrollSource, nil)
-
-	g.surfScroll1.Clear()
-	g.surfScroll1.DrawImage(g.surfScroll2, nil)
-
-	// Draw new letter
-	char := g.getIntroLetter(g.introTile)
-	if glyphImage, _, ok := g.fontAtlas.ExactGlyph(char); ok {
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Scale(2.0, 2.0)
-		op.GeoM.Translate(float64(screenWidth+g.introX), 0)
-		g.surfScroll1.DrawImage(glyphImage, op)
+	if g.introScroll.Finished() {
+		g.state = gameStateDemo
+		g.demoTime = 0
+		if g.audioPlayer != nil && !g.audioPlayer.IsPlaying() {
+			g.audioPlayer.Play()
+		}
 	}
+	return nil
 }
 
 func (g *Game) updateDemo() {
@@ -648,21 +433,15 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 func (g *Game) drawIntro(screen *ebiten.Image) {
 	screen.Fill(color.Black)
-
-	if g.crtShader != nil {
+	if g.crt != nil {
 		g.introStrip.Clear()
-		g.introStrip.DrawImage(g.surfScroll1, nil)
-
-		op := &ebiten.DrawRectShaderOptions{}
-		op.Images[0] = g.introStrip
-		op.GeoM.Translate(0, float64(screenHeight/2-int(fontHeight*2)/2))
-
-		screen.DrawRectShader(screenWidth, int(fontHeight*2), g.crtShader, op)
-	} else {
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(0, float64(screenHeight/2-int(fontHeight*2)/2))
-		screen.DrawImage(g.surfScroll1, op)
+		g.introScroll.Draw(g.introStrip)
+		g.crt.DrawAt(screen, g.introStrip, 0, float64(screenHeight/2-int(fontHeight*2)/2))
+		return
 	}
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(0, float64(screenHeight/2-int(fontHeight*2)/2))
+	screen.DrawImage(g.introScroll.Image(), op)
 }
 
 func (g *Game) drawDemo() {
@@ -673,7 +452,7 @@ func (g *Game) drawDemo() {
 	g.drawRotozoom(g.mainCanvas)
 
 	// 2. Scrolling text with distortion
-	g.drawScrollText(g.mainCanvas)
+	g.mainScroll.Draw(g.mainCanvas)
 
 	// 3. DMA logo sprites (9 logos grid)
 	g.drawDMALogos(g.mainCanvas)
@@ -733,65 +512,6 @@ func (g *Game) drawDMALogos(dst *ebiten.Image) {
 		op.ColorScale.Scale(1, 1, 1, 0.6) // Semi-transparent
 		dst.DrawImage(g.dmaLogoImg, op)
 	}
-}
-
-func (g *Game) drawScrollText(dst *ebiten.Image) {
-	g.frontWavePos = int(g.demoTime * 15)
-	decalX := g.scrollOffset(g.frontWavePos)
-	g.advanceScrollLetter(decalX)
-	if g.displayedLetter != g.letterNum {
-		g.displayText(g.letterNum)
-		g.displayedLetter = g.letterNum
-	}
-	bounce := int(math.Floor(18 * math.Abs(math.Sin(g.demoTime*.1))))
-	width := g.scrollSurf.Bounds().Dx()
-	height := int(fontHeight * 3.0)
-	baseY := 72
-	lines := screenHeight - 72
-	if g.stripBatch == nil {
-		g.stripBatch = composite.NewQuadBatch(lines)
-		g.stripBatch.AlternateDiagonal = true
-		g.stripBatch.Options.Address = ebiten.AddressRepeat
-	}
-	g.stripBatch.Begin(dst, g.scrollSurf)
-	for line := 0; line < lines; line++ {
-		sourceLine := line / 3
-		raw := g.getWave(g.frontWavePos+sourceLine) - g.letterDecal
-		sy := (((sourceLine+bounce)%fontHeight)*3 + line%3) % height
-		dx := 0
-		sx := raw % width
-		if raw < 0 {
-			dx = min(-raw, screenWidth)
-			sx = 0
-		}
-		w := screenWidth - dx
-		g.stripBatch.Rect(image.Rect(sx, sy, sx+w, sy+1), float32(dx), float32(baseY+line), float32(w), 1)
-	}
-	g.stripBatch.Flush()
-}
-
-func (g *Game) displayText(letterOffset int) {
-	g.scrollSurf.Clear()
-	if g.scrollRenderer == nil {
-		glyphs := make([]scrolling.Glyph, len(g.scrollTextRunes))
-		for i, r := range g.scrollTextRunes {
-			if glyphImage, letter, ok := g.fontAtlas.ExactGlyph(r); ok {
-				glyphs[i] = scrolling.Glyph{Image: glyphImage, Advance: float64(int(letter.Advance))}
-			} else {
-				glyphs[i] = scrolling.Glyph{Advance: 32}
-			}
-		}
-		var err error
-		g.scrollRenderer, err = scrolling.New(scrolling.Config{Glyphs: glyphs})
-		if err != nil {
-			panic(err)
-		}
-	}
-	state := g.scrollRenderer.Window(letterOffset, float64(g.scrollSurf.Bounds().Dx())/3)
-	state.ScaleX = 3
-	state.ScaleY = 3
-	state.X *= 3
-	g.scrollRenderer.DrawAt(g.scrollSurf, state)
 }
 
 func (g *Game) draw3DCubes(dst *ebiten.Image) {
