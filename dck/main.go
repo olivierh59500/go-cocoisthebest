@@ -7,6 +7,7 @@ import (
 	"image/color"
 
 	kit "github.com/olivierh59500/democonstructionkit"
+	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
 	"github.com/olivierh59500/democonstructionkit/geometry"
 	"github.com/olivierh59500/democonstructionkit/presets"
@@ -99,7 +100,6 @@ type Game struct {
 	// Images
 	titleImg   *ebiten.Image
 	barsImg    *ebiten.Image
-	barStrips  [10]*ebiten.Image
 	cocoImg    *ebiten.Image
 	dmaLogoImg *ebiten.Image
 	fontImg    *ebiten.Image
@@ -127,9 +127,7 @@ type Game struct {
 
 	// Demo effects
 	// Copper bars
-	cnt       float64
-	cnt2      float64
-	copperSin []int
+	copper *composite.CopperBars
 
 	// 3D Cubes
 	cubes     [nbCubes]*effects.SolidCube
@@ -169,6 +167,12 @@ func NewGame() *Game {
 	// Load images and construct the complete shared sprite formation.
 	g.loadImages()
 	var err error
+	if g.barsImg != nil {
+		g.copper, err = composite.NewCopperBars(presets.BilizirCopperBars(g.barsImg, 72, composite.CopperImages, composite.SingleWrapClock))
+		if err != nil {
+			panic(err)
+		}
+	}
 	g.logoFormation, err = sprites.NewGroup(presets.CocoLogoFormation(g.dmaLogoImg, screenWidth, screenHeight))
 	if err != nil {
 		panic(err)
@@ -196,7 +200,6 @@ func NewGame() *Game {
 
 	// Init font
 	g.initFontData()
-	g.initBarStrips()
 
 	// Init 3D cubes
 	for i := 0; i < nbCubes; i++ {
@@ -226,9 +229,6 @@ func NewGame() *Game {
 		panic(err)
 	}
 
-	// Init copper bars sine table
-	g.initCopperSin()
-
 	// Compile CRT shader
 	g.crt, err = effects.NewCRTOverlay(presets.DMACRTOverlay())
 	if err != nil {
@@ -236,11 +236,6 @@ func NewGame() *Game {
 	}
 
 	return g
-}
-
-// initCopperSin initializes the sine table for copper bars animation
-func (g *Game) initCopperSin() {
-	g.copperSin = presets.BilizirCopperOffsets()
 }
 
 func (g *Game) loadImages() {
@@ -311,17 +306,6 @@ func (g *Game) initFontData() {
 	}
 }
 
-func (g *Game) initBarStrips() {
-	if g.barsImg == nil || g.barsImg.Bounds().Dy() < len(g.barStrips)*2 {
-		return
-	}
-	width := g.barsImg.Bounds().Dx()
-	for i := range g.barStrips {
-		y := i * 2
-		g.barStrips[i] = g.barsImg.SubImage(image.Rect(0, y, width, y+2)).(*ebiten.Image)
-	}
-}
-
 func (g *Game) Update() error {
 	// On Android, NewGame runs while the native library is loaded. Opening the
 	// audio device there can block before the Activity has installed its view.
@@ -360,13 +344,13 @@ func (g *Game) updateDemo() error {
 	g.demoTime += speed
 
 	// Update copper bars
-	g.cnt += 3 * speed
-	if g.cnt >= 1024 {
-		g.cnt -= 1024
-	}
-	g.cnt2 -= 5 * speed
-	if g.cnt2 < 0 {
-		g.cnt2 += 1024
+	if g.copper != nil {
+		if err := g.copper.SetSpeed(speed); err != nil {
+			return err
+		}
+		if err := g.copper.Update(kit.Frame{}); err != nil {
+			return err
+		}
 	}
 
 	// Update 3D cubes
@@ -501,7 +485,9 @@ func (g *Game) drawTitleWithCopperbars(dst *ebiten.Image) {
 	g.titleCanvas.Fill(color.Black)
 
 	// Draw copper bars FIRST (background) - they will show through black/transparent areas of logo
-	g.drawCopperBars(g.titleCanvas)
+	if g.copper != nil {
+		g.copper.Draw(g.titleCanvas)
+	}
 
 	// Draw title logo on top with oscillating movement
 	// Oscillating horizontal movement that goes off-screen
@@ -518,50 +504,6 @@ func (g *Game) drawTitleWithCopperbars(dst *ebiten.Image) {
 
 	// Draw title canvas at top of screen
 	dst.DrawImage(g.titleCanvas, nil)
-}
-
-func (g *Game) drawCopperBars(dst *ebiten.Image) {
-	if g.barsImg == nil {
-		return
-	}
-
-	if g.barStrips[0] == nil {
-		return
-	}
-
-	// Draw copper bars filling the banner height (72px)
-	cc := 0
-	for i := 0; i < 36; i++ { // 36 bars * 2 pixels = 72 pixels height
-		// Calculate sine positions for animation
-		val2 := (int(g.cnt) + i*7) & 0x3ff
-		val := g.copperSin[val2]
-		val2 = (int(g.cnt2) + i*10) & 0x3ff
-		val += g.copperSin[val2]
-		val += 60
-
-		// Position
-		xPos := val >> 1
-		yPos := i << 1 // i * 2
-		height := 72 - yPos
-
-		if height > 0 && yPos < 72 {
-			op := &ebiten.DrawImageOptions{}
-
-			// Scale to stretch the 2 pixels
-			scaleY := float64(height) / 2.0
-
-			op.GeoM.Scale(1, scaleY)
-			op.GeoM.Translate(float64(xPos), float64(yPos))
-
-			dst.DrawImage(g.barStrips[cc/2], op)
-		}
-
-		// Cycle through the bars
-		cc += 2
-		if cc >= 20 {
-			cc = 0
-		}
-	}
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {

@@ -5,6 +5,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/sound"
@@ -125,6 +127,13 @@ func TestControlLayoutUsesOnlySideAreas(t *testing.T) {
 
 func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 	game := &Game{speedMultiplier: 2}
+	bars := ebiten.NewImage(46, 20)
+	defer bars.Deallocate()
+	var err error
+	game.copper, err = composite.NewCopperBars(presets.BilizirCopperBars(bars, 72, composite.CopperImages, composite.SingleWrapClock))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := range game.cubes {
 		var err error
 		game.cubes[i], err = effects.NewSolidCube(presets.CocoCube(40))
@@ -133,7 +142,6 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		}
 		defer game.cubes[i].Close()
 	}
-	var err error
 	game.logoFormation, err = sprites.NewGroup(presets.CocoLogoFormation(nil, screenWidth, screenHeight))
 	if err != nil {
 		t.Fatal(err)
@@ -141,13 +149,14 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 	if err := game.updateDemo(); err != nil {
 		t.Fatal(err)
 	}
+	copperA, copperB := game.copper.Phases()
 
 	checks := map[string]struct {
 		got, want float64
 	}{
 		"demo time":      {got: game.demoTime, want: 2},
-		"copper forward": {got: game.cnt, want: 6},
-		"copper reverse": {got: game.cnt2, want: 1014},
+		"copper forward": {got: copperA, want: 6},
+		"copper reverse": {got: copperB, want: 1014},
 		"sprite phase":   {got: game.logoFormation.Phase(), want: 0.04},
 		"rotozoom x":     {got: game.posXi, want: 0.016},
 		"rotozoom z":     {got: game.posZi, want: 0.006},
