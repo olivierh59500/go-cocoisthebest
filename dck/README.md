@@ -9,6 +9,9 @@ effects come from the published `github.com/olivierh59500/democonstructionkit`
 module pinned in `go.mod`. Music is opened with `sound.Open`; DCK selects the decoder from the asset and
 provides the configured stereo PCM format. The demo keeps its playback level and loop settings.
 
+The intro completion and immediate main-music cue use DCK's
+`timeline.IntroHandoff` without a fade, preserving the same entry tick.
+
 The title's 36 copper bars use `composite.CopperBars` with cached DrawImage
 strips and fractional phase clocks. The speed control changes the shared
 component's clock without resetting either phase. A 60-second comparison

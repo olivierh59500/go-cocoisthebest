@@ -14,6 +14,7 @@ import (
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
 	"github.com/olivierh59500/democonstructionkit/sprites"
+	"github.com/olivierh59500/democonstructionkit/timeline"
 	originalassets "github.com/olivierh59500/go-cocoisthebest"
 
 	_ "image/png"
@@ -87,13 +88,6 @@ const (
 	cdSplitted
 )
 
-type gameState uint8
-
-const (
-	gameStateIntro gameState = iota
-	gameStateDemo
-)
-
 // Game state
 type Game struct {
 	introScroll, mainScroll *scrolling.Scrolling
@@ -116,7 +110,7 @@ type Game struct {
 	audioReady   bool
 
 	// State
-	state    gameState
+	handoff  *timeline.IntroHandoff
 	demoTime float64
 
 	// Font data
@@ -157,16 +151,20 @@ type Game struct {
 
 func NewGame() *Game {
 	g := &Game{
-		state:           gameStateIntro,
 		speedMultiplier: 1.0,
 		logicalWidth:    screenWidth,
 		logoX:           0.5, // Center the logo (0.5 = centered)
 		hold:            0,   // Start immediately
 	}
 
+	var err error
+	g.handoff, err = timeline.NewIntroHandoff(presets.ImmediateIntroHandoff())
+	if err != nil {
+		panic(err)
+	}
+
 	// Load images and construct the complete shared sprite formation.
 	g.loadImages()
-	var err error
 	if g.barsImg != nil {
 		g.copper, err = composite.NewCopperBars(presets.BilizirCopperBars(g.barsImg, 72, composite.CopperImages, composite.SingleWrapClock))
 		if err != nil {
@@ -316,9 +314,10 @@ func (g *Game) Update() error {
 
 	g.updateControls()
 
-	if g.state == gameStateIntro {
+	if !g.handoff.Main() {
 		return g.updateIntro()
 	}
+	g.handoff.Step(false)
 	if err := g.updateDemo(); err != nil {
 		return err
 	}
@@ -329,11 +328,14 @@ func (g *Game) updateIntro() error {
 	if err := g.introScroll.Update(kit.Frame{}); err != nil {
 		return err
 	}
-	if g.introScroll.Finished() {
-		g.state = gameStateDemo
+	g.handoff.Step(g.introScroll.Finished())
+	if g.handoff.JustEntered() {
 		g.demoTime = 0
-		if g.audioPlayer != nil && !g.audioPlayer.IsPlaying() {
-			g.audioPlayer.Play()
+		if g.handoff.CueReady() {
+			if g.audioPlayer != nil && !g.audioPlayer.IsPlaying() {
+				g.audioPlayer.Play()
+			}
+			g.handoff.MarkCue()
 		}
 	}
 	return nil
@@ -386,7 +388,7 @@ func (g *Game) updateDemo() error {
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
 
-	if g.state == gameStateIntro {
+	if !g.handoff.Main() {
 		g.drawIntro(g.mainCanvas)
 	} else {
 		g.drawDemo()
