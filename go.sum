@@ -29,6 +29,8 @@ github.com/olivierh59500/democonstructionkit v0.0.0-20260926021052-221b074efc7c 
 github.com/olivierh59500/democonstructionkit v0.0.0-20260926021052-221b074efc7c/go.mod h1:QvIJgYXZCwRJFxzvrCu6ZdTmQ8+lO/Nuszendbx56ak=
 github.com/olivierh59500/democonstructionkit v0.0.0-20260926021915-eee435b569f1 h1:NTRY0u+k+EIEzIRKtXB1WedojgpZGW1f4lZjOXFFb+w=
 github.com/olivierh59500/democonstructionkit v0.0.0-20260926021915-eee435b569f1/go.mod h1:QvIJgYXZCwRJFxzvrCu6ZdTmQ8+lO/Nuszendbx56ak=
+github.com/olivierh59500/democonstructionkit v0.0.0-20260926084952-948a5411faec h1:Cn3yKxjij9a9m4DNYaXkCnMa8p4w38OvHteBdmkiHPM=
+github.com/olivierh59500/democonstructionkit v0.0.0-20260926084952-948a5411faec/go.mod h1:QvIJgYXZCwRJFxzvrCu6ZdTmQ8+lO/Nuszendbx56ak=
 github.com/olivierh59500/go-zikmu v0.0.0-20260923085818-5b7edcccaf3d h1:wSbGIKHaABiPkOcDSUysxrDUQ+Oo3FS8x44OSLDzVNw=
 github.com/olivierh59500/go-zikmu v0.0.0-20260923085818-5b7edcccaf3d/go.mod h1:hm6eQE43WMg8cn5gg4egkVVqSsB3PrWtffPFfnyy4ok=
 github.com/olivierh59500/ym-player v1.0.0 h1:8gAZMsY+zzIjxuue0KlGU9dVFLoL5a0IdMO1ozUFbUc=

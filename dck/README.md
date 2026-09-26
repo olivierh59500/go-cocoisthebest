@@ -23,10 +23,11 @@ half-bright tint, and live speed control stay configurable in DCK. The original
 production still keeps its own renderer; this version only supplies its image
 and screen dimensions.
 
-The top band now uses `composite.SurfaceLayer` to compose live copper bars and
-the title image on one bounded surface. A `motion.WaveClock` with the
-`presets.CocoTitleMotion` path changes the image pass position without rebuilding
-that surface. The title keeps its original starting phase and speed control.
+The top band uses `composite.CopperTitleBand` in retained-surface mode. It owns
+the bounded copper/title surface, both copper phases and the title wave clock.
+The published preset keeps the original starting phase, fractional wrap and
+live speed control; another image, palette or path can be configured without
+rewriting the scene.
 
 The twelve orange cubes use `effects.SolidCubeTrain`, which owns their
 independent phases, sinusoidal path, per-index rotations and one bounded draw

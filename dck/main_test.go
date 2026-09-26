@@ -7,10 +7,8 @@ import (
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	kit "github.com/olivierh59500/democonstructionkit"
 	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
-	"github.com/olivierh59500/democonstructionkit/motion"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/sound"
 	"github.com/olivierh59500/democonstructionkit/sprites"
@@ -133,26 +131,13 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 	bars := ebiten.NewImage(46, 20)
 	defer bars.Deallocate()
 	var err error
-	game.copper, err = composite.NewCopperBars(presets.BilizirCopperBars(bars, 72, composite.CopperImages, composite.SingleWrapClock))
-	if err != nil {
-		t.Fatal(err)
-	}
-	game.titleMotion, err = motion.NewWaveClock(presets.CocoTitleMotion(screenWidth))
-	if err != nil {
-		t.Fatal(err)
-	}
 	title := ebiten.NewImage(1, 1)
 	defer title.Deallocate()
-	game.titleLayer, err = composite.NewSurfaceLayer(composite.SurfaceLayerConfig{
-		Width: screenWidth, Height: 72,
-		Sources: []kit.Effect{game.copper},
-		Passes:  []composite.SurfaceImagePass{{Image: title, X: game.titleMotion.At(0)}},
-		Outputs: []composite.SurfaceOutput{{}},
-	})
+	game.titleBand, err = composite.NewCopperTitleBand(presets.CocoTitleBand(title, bars, screenWidth, composite.CopperTitleSurface))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer game.titleLayer.Close()
+	defer game.titleBand.Close()
 	game.cubeTrain, err = effects.NewSolidCubeTrain(presets.CocoCubeTrain(screenWidth, screenHeight, 40, nbCubes))
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +162,7 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 	if err := game.updateDemo(); err != nil {
 		t.Fatal(err)
 	}
-	copperA, copperB := game.copper.Phases()
+	copperA, copperB := game.titleBand.Copper().Phases()
 	rotoPose := game.roto.Repetition()
 	cubePosition, cubeRotation, ok := game.cubeTrain.Pose(0)
 	if !ok {
@@ -195,8 +180,8 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		"rotozoom center y": {got: rotoPose.CenterY, want: 300 + (600.0/2.7)*-math.Sin(.016*2.3-math.Cos(.016-.1))},
 		"rotozoom zoom":     {got: rotoPose.Zoom, want: .5 + math.Abs(math.Sin(.006)*2.5)},
 		"rotozoom rotation": {got: rotoPose.Rotation, want: 360.0 / 4.0 * math.Cos(.01*4-math.Cos(.01-.01)) * .3 * math.Pi / 180},
-		"title phase":       {got: game.titleMotion.Phase(), want: .525},
-		"title position":    {got: game.titleMotion.At(0), want: 64 + 800*math.Cos(.525)},
+		"title phase":       {got: game.titleBand.Clock().Phase(), want: .525},
+		"title position":    {got: game.titleBand.Clock().At(0), want: 64 + 800*math.Cos(.525)},
 		"cube x":            {got: cubePosition.X, want: 380 + 380*math.Sin(.15+.08)},
 		"cube y":            {got: cubePosition.Y, want: 300 + 84*math.Cos((.15+.08)*2.5)},
 		"cube rotation":     {got: cubeRotation.X, want: 0.04},

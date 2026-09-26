@@ -9,7 +9,6 @@ import (
 	kit "github.com/olivierh59500/democonstructionkit"
 	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
-	"github.com/olivierh59500/democonstructionkit/motion"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
@@ -117,10 +116,6 @@ type Game struct {
 	// CRT Shader
 	crt *effects.CRTOverlay
 
-	// Demo effects
-	// Copper bars
-	copper *composite.CopperBars
-
 	// 3D cube procession
 	cubeTrain *effects.SolidCubeTrain
 
@@ -131,9 +126,8 @@ type Game struct {
 	roto        *composite.RotozoomBackground
 	rotoProgram *presets.VivaRotozoom
 
-	// The title band composes copper bars and a moving logo in one surface.
-	titleLayer  *composite.SurfaceLayer
-	titleMotion *motion.WaveClock
+	// The shared band owns copper, title motion and its bounded surface.
+	titleBand *composite.CopperTitleBand
 	// Speed control
 	speedMultiplier float64
 
@@ -157,12 +151,6 @@ func NewGame() *Game {
 
 	// Load images and construct the complete shared sprite formation.
 	g.loadImages()
-	if g.barsImg != nil {
-		g.copper, err = composite.NewCopperBars(presets.BilizirCopperBars(g.barsImg, 72, composite.CopperImages, composite.SingleWrapClock))
-		if err != nil {
-			panic(err)
-		}
-	}
 	g.logoFormation, err = sprites.NewGroup(presets.CocoLogoFormation(g.dmaLogoImg, screenWidth, screenHeight))
 	if err != nil {
 		panic(err)
@@ -178,24 +166,9 @@ func NewGame() *Game {
 	if err != nil {
 		panic(err)
 	}
-	g.titleMotion, err = motion.NewWaveClock(presets.CocoTitleMotion(screenWidth))
-	if err != nil {
-		panic(err)
-	}
 	if g.titleImg != nil {
-		var sources []kit.Effect
-		if g.copper != nil {
-			sources = []kit.Effect{g.copper}
-		}
-		g.titleLayer, err = composite.NewSurfaceLayer(composite.SurfaceLayerConfig{
-			Width: screenWidth, Height: 72, Background: color.Black,
-			Sources: sources,
-			Passes: []composite.SurfaceImagePass{{
-				Image: g.titleImg, X: g.titleMotion.At(0),
-				ScaleY: 72.0 / float64(g.titleImg.Bounds().Dy()),
-			}},
-			Outputs: []composite.SurfaceOutput{{}},
-		})
+		g.titleBand, err = composite.NewCopperTitleBand(presets.CocoTitleBand(
+			g.titleImg, g.barsImg, screenWidth, composite.CopperTitleSurface))
 		if err != nil {
 			panic(err)
 		}
@@ -351,18 +324,8 @@ func (g *Game) updateDemo() error {
 	speed := g.speedMultiplier
 	g.demoTime += speed
 
-	// Update copper bars
-	if g.copper != nil {
-		if err := g.copper.SetSpeed(speed); err != nil {
-			return err
-		}
-	}
-	if g.titleLayer != nil {
-		if err := g.titleLayer.Update(kit.Frame{}); err != nil {
-			return err
-		}
-	} else if g.copper != nil {
-		if err := g.copper.Update(kit.Frame{}); err != nil {
+	if g.titleBand != nil {
+		if err := g.titleBand.Advance(speed); err != nil {
 			return err
 		}
 	}
@@ -388,15 +351,6 @@ func (g *Game) updateDemo() error {
 		}
 	}
 
-	if err := g.titleMotion.SetStep(.0125 * speed); err != nil {
-		return err
-	}
-	g.titleMotion.Step()
-	if g.titleLayer != nil {
-		if err := g.titleLayer.SetPassPosition(0, g.titleMotion.At(0), 0); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -447,8 +401,8 @@ func (g *Game) drawDemo() {
 	g.cubeTrain.Draw(g.mainCanvas)
 
 	// 5. The composed title band always stays on top.
-	if g.titleLayer != nil {
-		g.titleLayer.Draw(g.mainCanvas)
+	if g.titleBand != nil {
+		g.titleBand.Draw(g.mainCanvas)
 	}
 
 }
