@@ -22,3 +22,8 @@ The main background uses `composite.RotozoomBackground` with the
 half-bright tint, and live speed control stay configurable in DCK. The original
 production still keeps its own renderer; this version only supplies its image
 and screen dimensions.
+
+The top band now uses `composite.SurfaceLayer` to compose live copper bars and
+the title image on one bounded surface. A `motion.WaveClock` with the
+`presets.CocoTitleMotion` path changes the image pass position without rebuilding
+that surface. The title keeps its original starting phase and speed control.

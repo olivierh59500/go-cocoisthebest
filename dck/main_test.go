@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	kit "github.com/olivierh59500/democonstructionkit"
 	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
+	"github.com/olivierh59500/democonstructionkit/motion"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/sound"
 	"github.com/olivierh59500/democonstructionkit/sprites"
@@ -135,6 +137,22 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	game.titleMotion, err = motion.NewWaveClock(presets.CocoTitleMotion(screenWidth))
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := ebiten.NewImage(1, 1)
+	defer title.Deallocate()
+	game.titleLayer, err = composite.NewSurfaceLayer(composite.SurfaceLayerConfig{
+		Width: screenWidth, Height: 72,
+		Sources: []kit.Effect{game.copper},
+		Passes:  []composite.SurfaceImagePass{{Image: title, X: game.titleMotion.At(0)}},
+		Outputs: []composite.SurfaceOutput{{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer game.titleLayer.Close()
 	for i := range game.cubes {
 		var err error
 		game.cubes[i], err = effects.NewSolidCube(presets.CocoCube(40))
@@ -176,7 +194,8 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		"rotozoom center y": {got: rotoPose.CenterY, want: 300 + (600.0/2.7)*-math.Sin(.016*2.3-math.Cos(.016-.1))},
 		"rotozoom zoom":     {got: rotoPose.Zoom, want: .5 + math.Abs(math.Sin(.006)*2.5)},
 		"rotozoom rotation": {got: rotoPose.Rotation, want: 360.0 / 4.0 * math.Cos(.01*4-math.Cos(.01-.01)) * .3 * math.Pi / 180},
-		"title phase":       {got: game.logoX, want: 0.025},
+		"title phase":       {got: game.titleMotion.Phase(), want: .525},
+		"title position":    {got: game.titleMotion.At(0), want: 64 + 800*math.Cos(.525)},
 		"cube position":     {got: game.spritePos[0], want: 0.08},
 		"cube rotation":     {got: game.cubes[0].Rotation.X, want: 0.04},
 	}

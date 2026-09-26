@@ -10,6 +10,7 @@ import (
 	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
 	"github.com/olivierh59500/democonstructionkit/geometry"
+	"github.com/olivierh59500/democonstructionkit/motion"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
@@ -99,9 +100,8 @@ type Game struct {
 	fontImg    *ebiten.Image
 
 	// Canvases
-	introStrip  *ebiten.Image
-	mainCanvas  *ebiten.Image
-	titleCanvas *ebiten.Image
+	introStrip *ebiten.Image
+	mainCanvas *ebiten.Image
 
 	// Audio
 	audioContext *audio.Context
@@ -135,9 +135,9 @@ type Game struct {
 	roto        *composite.RotozoomBackground
 	rotoProgram *presets.VivaRotozoom
 
-	// Title logo animation
-	logoX float64
-	hold  int
+	// The title band composes copper bars and a moving logo in one surface.
+	titleLayer  *composite.SurfaceLayer
+	titleMotion *motion.WaveClock
 	// Speed control
 	speedMultiplier float64
 
@@ -151,8 +151,6 @@ func NewGame() *Game {
 	g := &Game{
 		speedMultiplier: 1.0,
 		logicalWidth:    screenWidth,
-		logoX:           0.5, // Center the logo (0.5 = centered)
-		hold:            0,   // Start immediately
 	}
 
 	var err error
@@ -180,8 +178,29 @@ func NewGame() *Game {
 		image.Rect(0, 0, screenWidth, screenHeight),
 		&ebiten.NewImageOptions{Unmanaged: true},
 	)
-	g.titleCanvas = ebiten.NewImage(screenWidth, 72)
 	g.cubeBatch = effects.NewSolidCubeBatch(nbCubes)
+	g.titleMotion, err = motion.NewWaveClock(presets.CocoTitleMotion(screenWidth))
+	if err != nil {
+		panic(err)
+	}
+	if g.titleImg != nil {
+		var sources []kit.Effect
+		if g.copper != nil {
+			sources = []kit.Effect{g.copper}
+		}
+		g.titleLayer, err = composite.NewSurfaceLayer(composite.SurfaceLayerConfig{
+			Width: screenWidth, Height: 72, Background: color.Black,
+			Sources: sources,
+			Passes: []composite.SurfaceImagePass{{
+				Image: g.titleImg, X: g.titleMotion.At(0),
+				ScaleY: 72.0 / float64(g.titleImg.Bounds().Dy()),
+			}},
+			Outputs: []composite.SurfaceOutput{{}},
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
 
 	if g.cocoImg != nil {
 		g.rotoProgram, err = presets.NewVivaRotozoom(presets.CocoRotozoom(screenWidth, screenHeight))
@@ -351,6 +370,12 @@ func (g *Game) updateDemo() error {
 		if err := g.copper.SetSpeed(speed); err != nil {
 			return err
 		}
+	}
+	if g.titleLayer != nil {
+		if err := g.titleLayer.Update(kit.Frame{}); err != nil {
+			return err
+		}
+	} else if g.copper != nil {
 		if err := g.copper.Update(kit.Frame{}); err != nil {
 			return err
 		}
@@ -380,12 +405,14 @@ func (g *Game) updateDemo() error {
 		}
 	}
 
-	// Update title logo (oscillating movement like viva_tcb)
-	if g.hold >= 1 {
-		g.hold--
+	if err := g.titleMotion.SetStep(.0125 * speed); err != nil {
+		return err
 	}
-	if g.hold <= 0 {
-		g.logoX += 0.0125 * speed // Moves from right to left and back
+	g.titleMotion.Step()
+	if g.titleLayer != nil {
+		if err := g.titleLayer.SetPassPosition(0, g.titleMotion.At(0), 0); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -436,8 +463,10 @@ func (g *Game) drawDemo() {
 	// 4. 3D cubes (on top of logos)
 	g.draw3DCubes(g.mainCanvas)
 
-	// 5. Title logo with copper bars on top (always on top)
-	g.drawTitleWithCopperbars(g.mainCanvas)
+	// 5. The composed title band always stays on top.
+	if g.titleLayer != nil {
+		g.titleLayer.Draw(g.mainCanvas)
+	}
 
 }
 
@@ -453,36 +482,6 @@ func (g *Game) draw3DCubes(dst *ebiten.Image) {
 		g.cubeBatch.Add(g.cubes[i], xPos, yPos)
 	}
 	g.cubeBatch.Draw(dst)
-}
-
-func (g *Game) drawTitleWithCopperbars(dst *ebiten.Image) {
-	if g.titleImg == nil {
-		return
-	}
-
-	// Fill title canvas with black (banner background)
-	g.titleCanvas.Fill(color.Black)
-
-	// Draw copper bars FIRST (background) - they will show through black/transparent areas of logo
-	if g.copper != nil {
-		g.copper.Draw(g.titleCanvas)
-	}
-
-	// Draw title logo on top with oscillating movement
-	// Oscillating horizontal movement that goes off-screen
-	titleX := 64 + float64(screenWidth)*math.Cos(g.logoX)
-
-	// Scale logo to fill the entire banner height (72px)
-	titleH := float64(g.titleImg.Bounds().Dy())
-	scaleY := 72.0 / titleH
-
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(1.0, scaleY)
-	op.GeoM.Translate(titleX, 0)
-	g.titleCanvas.DrawImage(g.titleImg, op)
-
-	// Draw title canvas at top of screen
-	dst.DrawImage(g.titleCanvas, nil)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
