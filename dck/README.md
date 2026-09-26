@@ -27,3 +27,8 @@ The top band now uses `composite.SurfaceLayer` to compose live copper bars and
 the title image on one bounded surface. A `motion.WaveClock` with the
 `presets.CocoTitleMotion` path changes the image pass position without rebuilding
 that surface. The title keeps its original starting phase and speed control.
+
+The twelve orange cubes use `effects.SolidCubeTrain`, which owns their
+independent phases, sinusoidal path, per-index rotations and one bounded draw
+batch. `presets.CocoCubeTrain` supplies Coco's original values; count, cube
+materials, curve rates, spacing and a custom path can be changed independently.

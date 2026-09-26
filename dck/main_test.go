@@ -153,14 +153,11 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer game.titleLayer.Close()
-	for i := range game.cubes {
-		var err error
-		game.cubes[i], err = effects.NewSolidCube(presets.CocoCube(40))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer game.cubes[i].Close()
+	game.cubeTrain, err = effects.NewSolidCubeTrain(presets.CocoCubeTrain(screenWidth, screenHeight, 40, nbCubes))
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer game.cubeTrain.Close()
 	game.logoFormation, err = sprites.NewGroup(presets.CocoLogoFormation(nil, screenWidth, screenHeight))
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +179,10 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 	}
 	copperA, copperB := game.copper.Phases()
 	rotoPose := game.roto.Repetition()
+	cubePosition, cubeRotation, ok := game.cubeTrain.Pose(0)
+	if !ok {
+		t.Fatal("first cube is missing")
+	}
 
 	checks := map[string]struct {
 		got, want float64
@@ -196,8 +197,9 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 		"rotozoom rotation": {got: rotoPose.Rotation, want: 360.0 / 4.0 * math.Cos(.01*4-math.Cos(.01-.01)) * .3 * math.Pi / 180},
 		"title phase":       {got: game.titleMotion.Phase(), want: .525},
 		"title position":    {got: game.titleMotion.At(0), want: 64 + 800*math.Cos(.525)},
-		"cube position":     {got: game.spritePos[0], want: 0.08},
-		"cube rotation":     {got: game.cubes[0].Rotation.X, want: 0.04},
+		"cube x":            {got: cubePosition.X, want: 380 + 380*math.Sin(.15+.08)},
+		"cube y":            {got: cubePosition.Y, want: 300 + 84*math.Cos((.15+.08)*2.5)},
+		"cube rotation":     {got: cubeRotation.X, want: 0.04},
 	}
 	for name, check := range checks {
 		if math.Abs(check.got-check.want) > 1e-12 {

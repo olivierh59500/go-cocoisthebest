@@ -9,7 +9,6 @@ import (
 	kit "github.com/olivierh59500/democonstructionkit"
 	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
-	"github.com/olivierh59500/democonstructionkit/geometry"
 	"github.com/olivierh59500/democonstructionkit/motion"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
@@ -20,7 +19,6 @@ import (
 
 	_ "image/png"
 	"log"
-	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 
@@ -123,10 +121,8 @@ type Game struct {
 	// Copper bars
 	copper *composite.CopperBars
 
-	// 3D Cubes
-	cubes     [nbCubes]*effects.SolidCube
-	spritePos [nbCubes]float64
-	cubeBatch *effects.SolidCubeBatch
+	// 3D cube procession
+	cubeTrain *effects.SolidCubeTrain
 
 	// Shared image formation for the sixteen synchronized logos.
 	logoFormation *sprites.Group
@@ -178,7 +174,10 @@ func NewGame() *Game {
 		image.Rect(0, 0, screenWidth, screenHeight),
 		&ebiten.NewImageOptions{Unmanaged: true},
 	)
-	g.cubeBatch = effects.NewSolidCubeBatch(nbCubes)
+	g.cubeTrain, err = effects.NewSolidCubeTrain(presets.CocoCubeTrain(screenWidth, screenHeight, 40, nbCubes))
+	if err != nil {
+		panic(err)
+	}
 	g.titleMotion, err = motion.NewWaveClock(presets.CocoTitleMotion(screenWidth))
 	if err != nil {
 		panic(err)
@@ -218,19 +217,6 @@ func NewGame() *Game {
 
 	// Init font
 	g.initFontData()
-
-	// Init 3D cubes
-	for i := 0; i < nbCubes; i++ {
-		var err error
-		g.cubes[i], err = effects.NewSolidCube(presets.CocoCube(40))
-		if err != nil {
-			panic(err)
-		}
-		// Set initial position offset for each cube
-		g.spritePos[i] = float64(0.15) * float64(i+1)
-		// Set different initial rotations
-		g.cubes[i].Rotation = geometry.Vec3{X: float64(i) * .3, Y: float64(i) * .2, Z: float64(i) * .1}
-	}
 
 	// Bind the same complete text transports used by other productions.
 	intro := presets.CocoIntroFeed(g.fontAtlas, introScrollText)
@@ -381,14 +367,11 @@ func (g *Game) updateDemo() error {
 		}
 	}
 
-	// Update 3D cubes
-	for i := 0; i < nbCubes; i++ {
-		g.spritePos[i] += 0.04 * speed
-		g.cubes[i].Rotate(
-			0.02*speed*(1+float64(i)*0.1),
-			0.03*speed*(1+float64(i)*0.15),
-			0.01*speed*(1+float64(i)*0.05),
-		)
+	if err := g.cubeTrain.SetSpeed(speed); err != nil {
+		return err
+	}
+	if err := g.cubeTrain.Update(kit.Frame{}); err != nil {
+		return err
 	}
 
 	// The group owns the common harmonics, grid positions and sprite poses.
@@ -460,28 +443,14 @@ func (g *Game) drawDemo() {
 	// 3. DMA logo sprites (9 logos grid)
 	g.logoFormation.Draw(g.mainCanvas)
 
-	// 4. 3D cubes (on top of logos)
-	g.draw3DCubes(g.mainCanvas)
+	// 4. The batched 3D cube procession sits above the logos.
+	g.cubeTrain.Draw(g.mainCanvas)
 
 	// 5. The composed title band always stays on top.
 	if g.titleLayer != nil {
 		g.titleLayer.Draw(g.mainCanvas)
 	}
 
-}
-
-func (g *Game) draw3DCubes(dst *ebiten.Image) {
-	g.cubeBatch.Reset()
-	// Draw each cube at its position
-	for i := 0; i < nbCubes; i++ {
-		// Calculate position
-		xPos := float64((screenWidth-40)/2) + (float64((screenWidth-40)/2) * math.Sin(g.spritePos[i]))
-		yPos := float64(screenHeight)/2 + (84 * math.Cos(g.spritePos[i]*2.5)) // Centered vertically
-
-		// Draw the 3D cube
-		g.cubeBatch.Add(g.cubes[i], xPos, yPos)
-	}
-	g.cubeBatch.Draw(dst)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
