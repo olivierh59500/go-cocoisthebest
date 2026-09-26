@@ -1,6 +1,7 @@
 package coco
 
 import (
+	"image"
 	"io"
 	"math"
 	"testing"
@@ -146,24 +147,38 @@ func TestUpdateDemoUsesSpeedMultiplier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	texture := ebiten.NewImage(1, 1)
+	defer texture.Deallocate()
+	game.rotoProgram, err = presets.NewVivaRotozoom(presets.CocoRotozoom(screenWidth, screenHeight))
+	if err != nil {
+		t.Fatal(err)
+	}
+	game.roto, err = composite.NewRotozoomBackground(composite.RotozoomBackgroundConfig{
+		Image: texture, Program: game.rotoProgram, SourceQuad: image.Pt(rotoWidth, rotoHeight),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := game.updateDemo(); err != nil {
 		t.Fatal(err)
 	}
 	copperA, copperB := game.copper.Phases()
+	rotoPose := game.roto.Repetition()
 
 	checks := map[string]struct {
 		got, want float64
 	}{
-		"demo time":      {got: game.demoTime, want: 2},
-		"copper forward": {got: copperA, want: 6},
-		"copper reverse": {got: copperB, want: 1014},
-		"sprite phase":   {got: game.logoFormation.Phase(), want: 0.04},
-		"rotozoom x":     {got: game.posXi, want: 0.016},
-		"rotozoom z":     {got: game.posZi, want: 0.006},
-		"rotozoom angle": {got: game.posRi, want: 0.01},
-		"title phase":    {got: game.logoX, want: 0.025},
-		"cube position":  {got: game.spritePos[0], want: 0.08},
-		"cube rotation":  {got: game.cubes[0].Rotation.X, want: 0.04},
+		"demo time":         {got: game.demoTime, want: 2},
+		"copper forward":    {got: copperA, want: 6},
+		"copper reverse":    {got: copperB, want: 1014},
+		"sprite phase":      {got: game.logoFormation.Phase(), want: 0.04},
+		"rotozoom center x": {got: rotoPose.CenterX, want: 400 + 200*math.Cos(.016*4-math.Cos(.016-.1))},
+		"rotozoom center y": {got: rotoPose.CenterY, want: 300 + (600.0/2.7)*-math.Sin(.016*2.3-math.Cos(.016-.1))},
+		"rotozoom zoom":     {got: rotoPose.Zoom, want: .5 + math.Abs(math.Sin(.006)*2.5)},
+		"rotozoom rotation": {got: rotoPose.Rotation, want: 360.0 / 4.0 * math.Cos(.01*4-math.Cos(.01-.01)) * .3 * math.Pi / 180},
+		"title phase":       {got: game.logoX, want: 0.025},
+		"cube position":     {got: game.spritePos[0], want: 0.08},
+		"cube rotation":     {got: game.cubes[0].Rotation.X, want: 0.04},
 	}
 	for name, check := range checks {
 		if math.Abs(check.got-check.want) > 1e-12 {

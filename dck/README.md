@@ -16,3 +16,9 @@ The title's 36 copper bars use `composite.CopperBars` with cached DrawImage
 strips and fractional phase clocks. The speed control changes the shared
 component's clock without resetting either phase. A 60-second comparison
 matched all 3,600 decoded frames, including the intro and animated title.
+
+The main background uses `composite.RotozoomBackground` with the
+`presets.CocoRotozoom` harmonic program. The source-sized quad, repeated tile,
+half-bright tint, and live speed control stay configurable in DCK. The original
+production still keeps its own renderer; this version only supplies its image
+and screen dimensions.

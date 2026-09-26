@@ -132,10 +132,8 @@ type Game struct {
 	logoFormation *sprites.Group
 
 	// Rotozoom
-	posXi        float64
-	posZi        float64
-	posRi        float64
-	rotoVertices [4]ebiten.Vertex
+	roto        *composite.RotozoomBackground
+	rotoProgram *presets.VivaRotozoom
 
 	// Title logo animation
 	logoX float64
@@ -185,16 +183,19 @@ func NewGame() *Game {
 	g.titleCanvas = ebiten.NewImage(screenWidth, 72)
 	g.cubeBatch = effects.NewSolidCubeBatch(nbCubes)
 
-	for i := range g.rotoVertices {
-		g.rotoVertices[i].ColorR = 0.5
-		g.rotoVertices[i].ColorG = 0.5
-		g.rotoVertices[i].ColorB = 0.5
-		g.rotoVertices[i].ColorA = 1
+	if g.cocoImg != nil {
+		g.rotoProgram, err = presets.NewVivaRotozoom(presets.CocoRotozoom(screenWidth, screenHeight))
+		if err != nil {
+			panic(err)
+		}
+		g.roto, err = composite.NewRotozoomBackground(composite.RotozoomBackgroundConfig{
+			Image: g.cocoImg, Program: g.rotoProgram,
+			SourceQuad: image.Pt(rotoWidth, rotoHeight),
+		})
+		if err != nil {
+			panic(err)
+		}
 	}
-	g.rotoVertices[1].SrcX = rotoWidth
-	g.rotoVertices[2].SrcY = rotoHeight
-	g.rotoVertices[3].SrcX = rotoWidth
-	g.rotoVertices[3].SrcY = rotoHeight
 
 	// Init font
 	g.initFontData()
@@ -370,10 +371,14 @@ func (g *Game) updateDemo() error {
 		return err
 	}
 
-	// Update rotozoom
-	g.posXi += 0.008 * speed
-	g.posZi += 0.003 * speed
-	g.posRi += 0.005 * speed
+	if g.roto != nil {
+		if err := g.rotoProgram.SetSpeedMultiplier(speed); err != nil {
+			return err
+		}
+		if err := g.roto.Update(kit.Frame{}); err != nil {
+			return err
+		}
+	}
 
 	// Update title logo (oscillating movement like viva_tcb)
 	if g.hold >= 1 {
@@ -418,7 +423,9 @@ func (g *Game) drawDemo() {
 
 	// Order of rendering (back to front):
 	// 1. Rotozoom background (furthest back)
-	g.drawRotozoom(g.mainCanvas)
+	if g.roto != nil {
+		g.roto.Draw(g.mainCanvas)
+	}
 
 	// 2. Scrolling text with distortion
 	g.mainScroll.Draw(g.mainCanvas)
@@ -432,36 +439,6 @@ func (g *Game) drawDemo() {
 	// 5. Title logo with copper bars on top (always on top)
 	g.drawTitleWithCopperbars(g.mainCanvas)
 
-}
-
-func (g *Game) drawRotozoom(dst *ebiten.Image) {
-	if g.cocoImg == nil {
-		return
-	}
-
-	zoom := 0.5 + math.Abs(math.Sin(g.posZi)*2.5)
-	rot := 360.0 / 4.0 * math.Cos(g.posRi*4-math.Cos(g.posRi-0.01)) * 0.3 * math.Pi / 180
-
-	oscX := (float64(screenWidth) / 4) * math.Cos(g.posXi*4-math.Cos(g.posXi-0.1))
-	oscY := (float64(screenHeight) / 2.7) * -math.Sin(g.posXi*2.3-math.Cos(g.posXi-0.1))
-
-	centerX := float64(screenWidth)/2 + oscX
-	centerY := float64(screenHeight)/2 + oscY
-
-	cosRot, sinRot := math.Cos(rot), math.Sin(rot)
-	setDestination := func(index int, x, y float64) {
-		x -= float64(rotoWidth) / 2
-		y -= float64(rotoHeight) / 2
-		g.rotoVertices[index].DstX = float32((x*cosRot-y*sinRot)*zoom + centerX)
-		g.rotoVertices[index].DstY = float32((x*sinRot+y*cosRot)*zoom + centerY)
-	}
-	setDestination(0, 0, 0)
-	setDestination(1, rotoWidth, 0)
-	setDestination(2, 0, rotoHeight)
-	setDestination(3, rotoWidth, rotoHeight)
-
-	op := &ebiten.DrawTrianglesOptions{Address: ebiten.AddressRepeat}
-	dst.DrawTriangles(g.rotoVertices[:], []uint16{0, 1, 2, 1, 2, 3}, g.cocoImg, op)
 }
 
 func (g *Game) draw3DCubes(dst *ebiten.Image) {
