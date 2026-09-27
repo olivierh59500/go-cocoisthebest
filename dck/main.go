@@ -157,7 +157,10 @@ func NewGame() *Game {
 	}
 
 	// Create canvases
-	g.introStrip = ebiten.NewImage(screenWidth, int(fontHeight*2))
+	g.introStrip = ebiten.NewImageWithOptions(
+		image.Rect(0, 0, screenWidth, int(fontHeight*2)),
+		&ebiten.NewImageOptions{Unmanaged: true},
+	)
 	g.mainCanvas = ebiten.NewImageWithOptions(
 		image.Rect(0, 0, screenWidth, screenHeight),
 		&ebiten.NewImageOptions{Unmanaged: true},

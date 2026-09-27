@@ -19,6 +19,14 @@ preserved Go original. The remaining CRT output difference is tracked in the
 DCK fidelity sweep rather than hidden by a tolerance. Set
 `COCO_INTRO_SOURCE_CAPTURES` to separate output directories when running the
 tagged root and `dck` tests.
+The `coco_crt_same_sourcecheck` GPU test feeds one texture to the preserved
+shader and DCK's shared `CRTOverlay`; their pixels match exactly at ticks 0
+and 240. Giving the DCK intro strip its own unmanaged GPU surface reduces
+complete-frame differences at those ticks from 13,827 to 6,269 and from
+22,379 to 11,396 respectively, without changing the decoded source pixels.
+The remaining difference is still visible in the fidelity report. The updated
+DCK APK was installed on Pixel 10a; its main-stage 744-interval sample had
+p95 16.731 ms, maximum 16.898 ms and none above 20 ms.
 
 The title's 36 copper bars use `composite.CopperBars` with cached DrawImage
 strips and fractional phase clocks. The speed control changes the shared
