@@ -31,7 +31,7 @@ func (c *introSourceCapture) Draw(dst *ebiten.Image) {
 		return
 	}
 	pixels := image.NewRGBA(image.Rect(0, 0, screenWidth, int(fontHeight*2)))
-	c.introStrip.ReadPixels(pixels.Pix)
+	c.introScroll.Image().ReadPixels(pixels.Pix)
 	file, err := os.Create(filepath.Join(c.directory, fmt.Sprintf("intro-%06d.png", c.tick)))
 	if err == nil {
 		err = png.Encode(file, pixels)

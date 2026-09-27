@@ -97,7 +97,6 @@ type Game struct {
 	fontImg    *ebiten.Image
 
 	// Canvases
-	introStrip *ebiten.Image
 	mainCanvas *ebiten.Image
 
 	// Audio
@@ -165,10 +164,6 @@ func NewGameWithOptions(options GameOptions) *Game {
 	}
 
 	// Create canvases
-	g.introStrip = ebiten.NewImageWithOptions(
-		image.Rect(0, 0, screenWidth, int(fontHeight*2)),
-		&ebiten.NewImageOptions{Unmanaged: true},
-	)
 	g.mainCanvas = ebiten.NewImageWithOptions(
 		image.Rect(0, 0, screenWidth, screenHeight),
 		&ebiten.NewImageOptions{Unmanaged: true},
@@ -218,8 +213,11 @@ func NewGameWithOptions(options GameOptions) *Game {
 	}
 
 	// Compile CRT shader
-	crtConfig := presets.DMACRTOverlay()
+	crtConfig := presets.CocoCRTOverlay()
 	crtConfig.NormalizeSource = options.NormalizeIntroCRT
+	if options.NormalizeIntroCRT {
+		crtConfig.SourceOrigin = image.Point{}
+	}
 	g.crt, err = effects.NewCRTOverlay(crtConfig)
 	if err != nil {
 		log.Printf("Failed to compile CRT shader: %v", err)
@@ -385,9 +383,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 func (g *Game) drawIntro(screen *ebiten.Image) {
 	screen.Fill(color.Black)
 	if g.crt != nil {
-		g.introStrip.Clear()
-		g.introScroll.Draw(g.introStrip)
-		g.crt.DrawAt(screen, g.introStrip, 0, float64(screenHeight/2-int(fontHeight*2)/2))
+		g.crt.DrawAt(screen, g.introScroll.Image(), 0, float64(screenHeight/2-int(fontHeight*2)/2))
 		return
 	}
 	op := &ebiten.DrawImageOptions{}
