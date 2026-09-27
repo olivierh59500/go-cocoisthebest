@@ -27,6 +27,15 @@ complete-frame differences at those ticks from 13,827 to 6,269 and from
 The remaining difference is still visible in the fidelity report. The updated
 DCK APK was installed on Pixel 10a; its main-stage 744-interval sample had
 p95 16.731 ms, maximum 16.898 ms and none above 20 ms.
+`NewGameWithOptions(GameOptions{NormalizeIntroCRT: true})` selects DCK's
+atlas-independent CRT policy for a new visual variation. The ordinary
+`NewGame()` keeps Coco's historical sampling: a normalized-mode comparison
+against the preserved original differs more at the intro checkpoints, so it
+is not selected by default. The opt-in `coco_intro_sourcecheck` accepts
+`COCO_NORMALIZE_CRT=1` for inspecting this variant.
+On desktop, run `go run ./dck/cmd/cocoisthebest -normalize-crt` to try it.
+After updating the DCK dependency, default complete-frame captures at ticks
+0, 1, 60, 240 and 241 remained byte-identical to the preceding DCK build.
 
 The title's 36 copper bars use `composite.CopperBars` with cached DrawImage
 strips and fractional phase clocks. The speed control changes the shared

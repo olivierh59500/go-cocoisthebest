@@ -137,7 +137,15 @@ type Game struct {
 	controlPressed [controlCount]bool
 }
 
-func NewGame() *Game {
+// GameOptions selects optional rendering policies. The zero value keeps the
+// original desktop CRT sampling for full-scene fidelity.
+type GameOptions struct {
+	NormalizeIntroCRT bool
+}
+
+func NewGame() *Game { return NewGameWithOptions(GameOptions{}) }
+
+func NewGameWithOptions(options GameOptions) *Game {
 	g := &Game{
 		speedMultiplier: 1.0,
 		logicalWidth:    screenWidth,
@@ -210,7 +218,9 @@ func NewGame() *Game {
 	}
 
 	// Compile CRT shader
-	g.crt, err = effects.NewCRTOverlay(presets.DMACRTOverlay())
+	crtConfig := presets.DMACRTOverlay()
+	crtConfig.NormalizeSource = options.NormalizeIntroCRT
+	g.crt, err = effects.NewCRTOverlay(crtConfig)
 	if err != nil {
 		log.Printf("Failed to compile CRT shader: %v", err)
 	}

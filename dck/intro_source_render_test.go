@@ -61,7 +61,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	err := capture.Run(capture.Config{Directory: directory, Frames: []int{0, 1, 60, 240, 241}, Width: screenWidth, Height: screenHeight}, func() (ebiten.Game, error) {
-		game := NewGame()
+		game := NewGameWithOptions(GameOptions{NormalizeIntroCRT: os.Getenv("COCO_NORMALIZE_CRT") == "1"})
 		game.audioReady = true
 		return &introSourceCapture{Game: game, directory: directory}, nil
 	})
