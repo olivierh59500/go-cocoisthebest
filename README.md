@@ -6,6 +6,25 @@ Welcome to the most rad demoscene experience you'll have in a terminal-spawned w
 
 ![DMA 2025](https://img.shields.io/badge/DMA-2025-orange) ![Made with Go](https://img.shields.io/badge/Made%20with-Go-00ADD8) ![Demoscene](https://img.shields.io/badge/Demoscene-Forever-ff69b4)
 
+<!-- Project showcase -->
+## Screenshots
+
+[![DMA lettering and orange cubes over a moving tiled credit background](docs/media/screenshot-1.png)](docs/media/screenshot-1.png)
+
+DMA lettering and orange cubes over a moving tiled credit background.
+
+## Video
+
+[![Animated preview of Coco is the best](docs/media/preview.gif)](https://github.com/olivierh59500/go-cocoisthebest/raw/refs/heads/main/docs/media/preview.mp4)
+
+**[Watch or download the 24-second MP4 preview with sound](https://github.com/olivierh59500/go-cocoisthebest/raw/refs/heads/main/docs/media/preview.mp4)**
+
+This preview is captured from the Go production.
+
+The animated image is silent; the MP4 includes the soundtrack.
+
+<!-- End project showcase -->
+
 ## 🚀 Quick Start
 
 ```bash
